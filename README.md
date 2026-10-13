@@ -2,9 +2,13 @@
 
 An icon grid that one hotkey away — pin the commands and notes you actually use onto a panel that appears where your mouse is, so you don't have to memorise hotkeys or type search queries.
 
-> Status: **v0.1.1 — batch 1 of 3 (panel + execute + icons)**. Working today: the panel, keyboard/mouse execution, icons from three sources, live config file, broken-item detection. Coming next: add-a-tile from inside the panel, tile context menu, file/folder tiles, import/export. See *Roadmap* below.
+> Status: **v0.1.3 — batch 1 of 3 (panel + execute + icons)**. Working today: the panel, keyboard/mouse execution, icons from three sources, live config file, broken-item detection. Coming next: add-a-tile from inside the panel, tile context menu, file/folder tiles, import/export. See *Roadmap* below.
 >
-> **v0.1.1 fixes a real display bug found on first run**: the modal container lost its viewport size (so the whole screen dimmed while the panel was pushed off-screen, leaving a white sliver in the corner), and the card's `top` clamp let it overflow the bottom edge. The container is now viewport-sized and the panel is positioned with `left/top: 0` + `translate()`, clamped using the measured rect. If the panel still looks wrong, run the command **导出面板诊断（排查显示问题用）** — it writes the real geometry to `.quick-panel-diag.txt` in the vault root.
+> **v0.1.3** renamed the panel to **快捷面板** (the earlier build wrote 快接面板). Your config file is **renamed automatically on first load** — the old `快接面板.json` is copied to `快捷面板.json` and then removed, content untouched. The config file name is the only thing that changed.
+>
+> **v0.1.2 fixed "the panel opens in the wrong place, a different place every time"**: the mouse was tracked globally rather than per window, so the coordinates could be stale; `placeAtMouse` also clamped with an *estimated* card size. Now the mouse is tracked per window (`ownerDocument.defaultView`, so popout windows work too), frame-one entrance animation is disabled for the panel, and the position is computed once from the *measured* rect — if the card has not been laid out yet it is not positioned at all and is re-measured on the next frame.
+>
+> **v0.1.1 fixed a display bug found on first run**: the modal container lost its viewport size (the whole screen dimmed while the panel was pushed off-screen, leaving a white sliver in the corner), and the card's `top` clamp let it overflow the bottom edge. If the panel still looks wrong, run the command **导出面板诊断（排查显示问题用）** — it writes the real geometry to `.quick-panel-diag.txt` in the vault root.
 
 ## What it is
 
@@ -27,7 +31,7 @@ If you have ever used the "quick access panel" in SolidWorks, this is the same h
 
 1. Copy `main.js`, `manifest.json`, `styles.css` into `<vault>/.obsidian/plugins/quick-panel/`.
 2. Obsidian → Settings → Community plugins → enable **Quick Panel**.
-3. (Optional) Settings → Hotkeys → search "快接面板" → bind **Ctrl+Alt+Space**.
+3. (Optional) Settings → Hotkeys → search "快捷面板" → bind **Ctrl+Alt+Space**.
 
 `tools/deploy.ps1` does step 1 for you and verifies hash equality afterwards:
 
@@ -37,7 +41,7 @@ powershell -ExecutionPolicy Bypass -File tools\deploy.ps1 -Vault E:\Dnotes
 
 ## Configuration
 
-The panel reads and writes exactly one file: **`<vault root>/快接面板.json`**. It is created on first run, it is plain readable JSON, and it is the single source of truth — the plugin's own `data.json` only stores UI state. Delete the plugin and the file is still there and still meaningful.
+The panel reads and writes exactly one file: **`<vault root>/快捷面板.json`**. It is created on first run, it is plain readable JSON, and it is the single source of truth — the plugin's own `data.json` only stores UI state. Delete the plugin and the file is still there and still meaningful.
 
 ```json
 {
@@ -69,7 +73,7 @@ Hand-editing the file is fully supported; reopen the panel and the change is liv
 
 ## Behaviour guarantees
 
-1. **One write target.** Every write goes to `<vault root>/快接面板.json`. The plugin never touches `.obsidian`, never creates or deletes files, and never modifies a note.
+1. **One write target.** Every write goes to `<vault root>/快捷面板.json`. The plugin never touches `.obsidian`, never creates or deletes files, and never modifies a note.
 2. **A corrupt config is never overwritten.** Bad JSON is reported, the original file is left byte-for-byte intact, and the panel starts empty.
 3. **Nothing happens by itself.** No timers, no background scans, no file watchers, no network. Actions run when you click.
 4. **Uninstalling loses nothing.** Your configuration is ordinary JSON; the tiles point at Obsidian's own commands and your own files.
@@ -111,17 +115,21 @@ MIT — see [LICENSE](LICENSE).
 
 ---
 
-# 快接面板（中文）
+# 快捷面板（中文）
 
 一个快捷键呼出的**图标网格面板**：把你真正在用的命令、笔记、文件夹钉在眼前，不用记快捷键，也不用打字搜索。
 
-> 状态：**v0.1.1 —— 三批里的第 1 批（面板 + 执行 + 图标）**。现在能用的：面板本体、键盘/鼠标执行、三种图标来源、库内配置文件实时生效、失效项检测。下一批：面板内即时添加、格子右键菜单；再下一批：文件/文件夹项打磨与导入导出。
+> 状态：**v0.1.3 —— 三批里的第 1 批（面板 + 执行 + 图标）**。现在能用的：面板本体、键盘/鼠标执行、三种图标来源、库内配置文件实时生效、失效项检测。下一批：面板内即时添加、格子右键菜单；再下一批：文件/文件夹项打磨与导入导出。
 >
-> **v0.1.1 修的是第一次实测暴露的显示 bug**：容器丢掉视口尺寸（结果整屏变暗、面板被挤出屏幕、只在角上留一块白条），以及卡片靠 `top` 钳位导致底边溢出。现在容器铺满视口、面板用 `left/top: 0` + `translate()` 定位并按实测尺寸钳位。若显示仍不对，跑命令 **导出面板诊断（排查显示问题用）**，它会把真实几何写进库根 `.quick-panel-diag.txt`。
+> **v0.1.3** 把面板名改成 **快捷面板**（早先那版写成了「快接面板」）。你的配置文件**首次加载时会自动改名**：旧的 `快接面板.json` 原样复制成 `快捷面板.json` 后删除，内容一字不改。
+>
+> **v0.1.2 修的是"面板位置不对、每次还不一样"**：鼠标坐标原先只有一个全局记录（可能是陈旧的），`placeAtMouse` 又用**估算**的卡片尺寸钳位。现在按窗口记录鼠标（走 `ownerDocument.defaultView`，弹窗也对）、关掉面板入场动画，并且只用**实测 rect** 算位置 —— 量不到尺寸的那一帧干脆不定位，下一帧重量。
+>
+> **v0.1.1 修的是第一次实测暴露的显示 bug**：容器丢掉视口尺寸（结果整屏变暗、面板被挤出屏幕、只在角上留一块白条），以及卡片靠 `top` 钳位导致底边溢出。若显示仍不对，跑命令 **导出面板诊断（排查显示问题用）**，它会把真实几何写进库根 `.quick-panel-diag.txt`。
 
 ## 它是什么
 
-如果你用过 SolidWorks 的"快接面板"，就是同一个习惯搬到 Obsidian：按一个键，面板出来，点你要的命令。
+如果你用过 SolidWorks 的"快捷面板"，就是同一个习惯搬到 Obsidian：按一个键，面板出来，点你要的命令。
 
 **Obsidian 插件注册不了系统级全局热键** —— `globalShortcut` 属 Electron 主进程，插件跑在渲染进程。所以本插件做的是次优解：**Obsidian 窗口内一键呼出**（快捷键由你自己绑）+ ribbon 图标入口。
 
@@ -140,7 +148,7 @@ MIT — see [LICENSE](LICENSE).
 
 1. 把 `main.js`、`manifest.json`、`styles.css` 放到 `<库>/.obsidian/plugins/quick-panel/`。
 2. Obsidian → 设置 → 第三方插件 → 启用 **Quick Panel**。
-3. （可选）设置 → 快捷键 → 搜「快接面板」→ 绑 **Ctrl+Alt+Space**。
+3. （可选）设置 → 快捷键 → 搜「快捷面板」→ 绑 **Ctrl+Alt+Space**。
 
 第 1 步可以用脚本代劳，跑完会核对哈希：
 
@@ -150,7 +158,7 @@ powershell -ExecutionPolicy Bypass -File tools\deploy.ps1 -Vault E:\Dnotes
 
 ## 配置
 
-面板只读写一个文件：**`<库根>/快接面板.json`**。首次运行自动创建，是纯文本 JSON，也是配置的**唯一真源** —— 插件自己的 `data.json` 只存 UI 状态。卸载插件后这个文件仍在、仍然可读。
+面板只读写一个文件：**`<库根>/快捷面板.json`**。首次运行自动创建，是纯文本 JSON，也是配置的**唯一真源** —— 插件自己的 `data.json` 只存 UI 状态。卸载插件后这个文件仍在、仍然可读。
 
 ```json
 {
@@ -179,7 +187,7 @@ powershell -ExecutionPolicy Bypass -File tools\deploy.ps1 -Vault E:\Dnotes
 
 ## 行为承诺
 
-1. **只有一个写入对象**：所有写操作都发生在 `<库根>/快接面板.json`；不碰 `.obsidian`，不新建/删除库内文件，不改任何笔记。
+1. **只有一个写入对象**：所有写操作都发生在 `<库根>/快捷面板.json`；不碰 `.obsidian`，不新建/删除库内文件，不改任何笔记。
 2. **坏配置绝不覆盖**：JSON 损坏时只提示、保留原文件逐字节不变，用空面板起步。
 3. **不点不动**：没有定时器、没有后台扫描、没有文件监听、没有联网。
 4. **卸载不丢东西**：配置就是普通 JSON，格子指向的仍是 Obsidian 自己的命令和你自己的文件。

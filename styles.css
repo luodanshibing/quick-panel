@@ -1,5 +1,5 @@
 /*
- * Quick Panel（快接面板）样式
+ * Quick Panel（快捷面板）样式
  *
  * 三条约束：
  *  1) 只作用于本插件自己的 DOM（.quick-panel / .qp-*），不碰 Obsidian 全局组件；
@@ -72,6 +72,9 @@ body.qp-dragging {
 /* 面板宽度 = 列数 × 格宽（JS 写入 --qp-width），不让主题/Obsidian 的 100vw 拉伸它 */
 .quick-panel .modal {
   width: var(--qp-width, 520px);
+  /* 关掉入场动画/过渡：动画期间量到的是"中间态尺寸"，会让钳位结果每次都不一样 */
+  animation: none !important;
+  transition: none !important;
 }
 
 .quick-panel .modal-close-button {

@@ -1,13 +1,13 @@
 'use strict';
 /*
- * Quick Panel（快接面板）— v0.1.0
+ * Quick Panel（快捷面板）— v0.1.0
  *
  * 一句话：一个快捷键在 Obsidian 窗口内呼出「图标网格面板」，格子里是你自己挑的命令 / 笔记 / 文件夹。
  *
  * 五条设计红线（改代码前先读）：
  *   1) 启动零扫描：onload 只读一次配置 + 注册一条命令 + 一个 ribbon 图标，不调 listCommands()、
  *      不扫库、不起定时器、不挂常驻监听。命令表在「打开面板」那一刻才解析。
- *   2) 配置真源是库内可见文件 <库根>/快接面板.json；data.json 只存 UI 状态（面板位置）。
+ *   2) 配置真源是库内可见文件 <库根>/快捷面板.json；data.json 只存 UI 状态（面板位置）。
  *      配置读坏了 → 保留原文件、提示、用临时默认面板启动，绝不覆盖。
  *   3) 写操作只发生在上面那一个 JSON 里：不碰 .obsidian、不碰任何笔记、不碰任何原文件。
  *   4) 全程手动：不点不动。没有后台任务、没有自动写入、没有隐式副作用。
@@ -30,7 +30,10 @@ const {
  * ===================================================================================== */
 
 /** 配置文件固定名（用户已裁定：文件名可见、不做点号隐藏） */
-const CONFIG_NAME = '快接面板.json';
+const CONFIG_NAME = '快捷面板.json';
+
+/** 改名前的旧文件名（2026-10-13 用户把面板名定为「快捷面板」）；首次加载时自动迁移 */
+const CONFIG_NAME_LEGACY = '快接面板.json';
 
 /** 配置文件结构版本；将来结构变了用它做迁移判断 */
 const CONFIG_VERSION = 1;
@@ -512,6 +515,8 @@ class QuickPanelModal extends Modal {
 
   onOpen() {
     this.modalEl.addClass('quick-panel');
+    // 弹窗/多窗口场景下，面板所在的 window 未必是主窗口 —— 视口尺寸与鼠标坐标都要取它自己的
+    this.setView(this.modalEl.ownerDocument || document);
 
     // 解析命令表只发生在「面板打开」这一刻（启动零扫描）
     const registry = this.host.commandRegistry();
@@ -560,8 +565,9 @@ class QuickPanelModal extends Modal {
 
     this.render();
     this.placeAtMouse();
-    this.registerDomEvent(window, 'resize', () => this.placeAtMouse());
-    window.setTimeout(() => {
+    const win = this.getWindow();
+    this.registerDomEvent(win, 'resize', () => this.placeAtMouse());
+    win.setTimeout(() => {
       if (this.modalEl && this.modalEl.isConnected) this.modalEl.focus();
     }, 0);
     if (this.opts.autoHighlightFirst !== false) this.setHighlight(0);
@@ -579,7 +585,7 @@ class QuickPanelModal extends Modal {
   buildHeader() {
     const header = this.contentEl.createDiv({ cls: 'qp-header' });
     const title = header.createDiv({ cls: 'qp-title' });
-    title.createSpan({ cls: 'qp-title-text', text: '快接面板' });
+    title.createSpan({ cls: 'qp-title-text', text: '快捷面板' });
     title.createSpan({
       cls: 'qp-count',
       text: this.items.length + ' 格' + (this.missing.length ? ' · ' + this.missing.length + ' 项待处理' : ''),
@@ -590,7 +596,7 @@ class QuickPanelModal extends Modal {
     setIcon(addBtn, 'plus');
     addBtn.setAttribute('aria-label', '添加（下一批实现）');
     addBtn.addEventListener('click', () => {
-      new Notice('「即时添加」在下一批实现：先用文本编辑器打开 快接面板.json 手写一条');
+      new Notice('「即时添加」在下一批实现：先用文本编辑器打开 快捷面板.json 手写一条');
     });
     const menuBtn = actions.createEl('button', { cls: 'qp-icon-btn', attr: { type: 'button' } });
     setIcon(menuBtn, 'more-horizontal');
@@ -648,9 +654,10 @@ class QuickPanelModal extends Modal {
     };
     const onUp = () => {
       dragging = false;
-      document.body.removeClass('qp-dragging');
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
+      const w = this.getWindow();
+      if (w.document && w.document.body) w.document.body.removeClass('qp-dragging');
+      w.removeEventListener('mousemove', onMove);
+      w.removeEventListener('mouseup', onUp);
     };
     handle.addEventListener('mousedown', (evt) => {
       if (evt.button !== 0) return;
@@ -662,9 +669,10 @@ class QuickPanelModal extends Modal {
       const rect = this.modalEl.getBoundingClientRect();
       startX = rect.left;
       startY = rect.top;
-      document.body.addClass('qp-dragging');
-      window.addEventListener('mousemove', onMove);
-      window.addEventListener('mouseup', onUp);
+      const w = this.getWindow();
+      if (w.document && w.document.body) w.document.body.addClass('qp-dragging');
+      w.addEventListener('mousemove', onMove);
+      w.addEventListener('mouseup', onUp);
       evt.preventDefault();
     });
   }
@@ -691,7 +699,7 @@ class QuickPanelModal extends Modal {
         cls: 'qp-empty',
         text: this.items.length
           ? '没有匹配的格子'
-          : '面板还是空的：编辑 快接面板.json 加条目，或用下一批的「面板内即时添加」',
+          : '面板还是空的：编辑 快捷面板.json 加条目，或用下一批的「面板内即时添加」',
       });
     } else {
       this.visible.forEach(function (entry, index) {
@@ -727,7 +735,7 @@ class QuickPanelModal extends Modal {
 
   /** 列数只在这里改：CSS 变量 + 面板宽度，避免"宽度决定列数、列数又决定宽度"的自我循环 */
   applyColumnCount() {
-    const columns = this.config.panel.columns === 'auto' ? gridColumns(gridWidthFor(window.innerWidth, MAX_PANEL_WIDTH), CELL_MIN, CELL_GAP) : this.config.panel.columns;
+    const columns = this.config.panel.columns === 'auto' ? gridColumns(gridWidthFor((this.view || window).innerWidth, MAX_PANEL_WIDTH), CELL_MIN, CELL_GAP) : this.config.panel.columns;
     this.columns = columns;
     if (!this.gridEl) return;
     this.gridEl.style.setProperty('--qp-cols', String(columns));
@@ -929,9 +937,10 @@ class QuickPanelModal extends Modal {
 
     const needsEditor = typeof cmd.editorCallback === 'function' || typeof cmd.editorCheckCallback === 'function';
     const editor = this.app.workspace.activeEditor;
+    const win = this.getWindow();
     this.silentClose();
     this.host.touchRecent(item);
-    window.setTimeout(function () {
+    win.setTimeout(function () {
       if (needsEditor && editor && typeof editor.focus === 'function') {
         try {
           editor.focus();
@@ -995,7 +1004,7 @@ class QuickPanelModal extends Modal {
     menu.addSeparator();
     menu.addItem((i) =>
       i
-        .setTitle('打开配置文件（快接面板.json）')
+        .setTitle('打开配置文件（快捷面板.json）')
         .setIcon('file-text')
         .onClick(() => this.host.openConfigFile())
     );
@@ -1029,7 +1038,7 @@ class QuickPanelModal extends Modal {
   openMoreMenu(evt) {
     const menu = new Menu();
     menu.addItem((i) =>
-      i.setTitle('打开配置文件（快接面板.json）').setIcon('file-text').onClick(() => this.host.openConfigFile())
+      i.setTitle('打开配置文件（快捷面板.json）').setIcon('file-text').onClick(() => this.host.openConfigFile())
     );
     menu.addItem((i) =>
       i.setTitle('在文件浏览器中定位配置文件').setIcon('folder').onClick(() => this.host.revealConfigFile())
@@ -1050,38 +1059,114 @@ class QuickPanelModal extends Modal {
         })
     );
     if (evt && evt.clientX !== undefined) menu.showAtMouseEvent(evt);
-    else menu.showAtPosition({ x: window.innerWidth / 2, y: 80 });
+    else menu.showAtPosition({ x: (this.view || window).innerWidth / 2, y: 80 });
   }
 
-  /* ---- 定位 ---- */
+  /* ---- 视图与定位 ---- */
+
+  /* ---- 视图与定位 ---- */
+
+  /** 面板所在窗口（主窗口或弹窗）。this.view 存的就是 window，不是 document。 */
+  getWindow() {
+    return this.view || (this.modalEl && this.modalEl.ownerDocument && this.modalEl.ownerDocument.defaultView) || window;
+  }
+
+  /** 面板所在 document（用于挂监听、给 body 加 class） */
+  getDocument() {
+    return (this.view && this.view.document) || document;
+  }
 
   /**
-   * 把面板放在鼠标位置（右下偏移一点），并保证整块面板都在视口内。
+   * 绑定"面板所在的窗口"。主窗口与弹窗（popout）是不同 window ——
+   * 从 this.modalEl.ownerDocument.defaultView 取，取不到才退回全局。
+   */
+  setView(doc) {
+    const given = doc || document;
+    const w = (given && given.defaultView) || window;
+    this.view = w;
+    this.ensureMouseTracking(w);
+  }
+
+  /**
+   * 按窗口挂鼠标跟踪：只记两个数字，不碰 DOM 结构。
+   * 用 registerDomEvent → 插件停用时自动注销，不残留监听（弹窗会各自挂一个）。
+   */
+  ensureMouseTracking(win) {
+    const w = win || this.getWindow();
+    if (!w || !w.document || typeof w.document.addEventListener !== 'function') return;
+    const d = w.document;
+    if (!w.__quickPanelMouse || w.__quickPanelMouse.doc !== d) {
+      w.__quickPanelMouse = { doc: d, x: Math.round(w.innerWidth / 2), y: Math.round(w.innerHeight * 0.3), known: false };
+    }
+    if (typeof this.registerDomEvent !== 'function') return;
+    this._mouseTracked = this._mouseTracked || [];
+    if (this._mouseTracked.indexOf(w) >= 0) return;
+    this._mouseTracked.push(w);
+    this.registerDomEvent(
+      d,
+      'mousemove',
+      (evt) => {
+        const s = w.__quickPanelMouse;
+        if (!s) return;
+        s.x = evt.clientX;
+        s.y = evt.clientY;
+        s.known = true;
+      },
+      { passive: true }
+    );
+  }
+
+  /** 当前窗口里最后已知的鼠标位置（没有鼠标事件时给视口中心偏上） */
+  mousePoint() {
+    const w = this.getWindow();
+    const m = w.__quickPanelMouse;
+    if (m && m.known) return { x: m.x, y: m.y, known: true };
+    return { x: Math.round((w.innerWidth || 1280) / 2), y: Math.round((w.innerHeight || 800) * 0.3), known: false };
+  }
+
+  /**
+   * 把面板放在鼠标位置，并保证整块面板都落在视口内。
    *
-   * ⚠️ 上一版踩过的坑：把钳位写进 top、再让卡片自己算高度 → 卡片比预算高时底边露到屏幕外
-   * （用户实测症状：整屏变暗 + 右下角一块白条）。现在改成：
-   *   · left/top 固定为 0，位置一律用 translate 给（transform 不参与 layout，量出来的 rect 才准）；
-   *   · 先写宽度、再量一次 rect，用**量到的真实宽高**做钳位；
-   *   · 卡片本身 width/height 都是 fit-content + max-height（见 styles.css），不会比视口高。
+   * 位置 = 鼠标 + 一格间距；但**先量卡片、再钳位**：
+   * 只要量出来的卡片尺寸为 0（还没排版，例如首次打开的那一帧），先不定位，
+   * 下一帧再量一次 —— 否则会用一个假的宽度去钳位，位置每次都不一样。
    */
   placeAtMouse() {
     if (!this.modalEl) return;
-    // left/top 固定为 0：位置只用 translate 给（这样量到的 rect 不含定位偏移，宽度才是真宽度）
+    const w = this.getWindow();
+    const vw = w.innerWidth || 1280;
+    const vh = w.innerHeight || 800;
     if (this.modalEl.style.left !== '0px') this.modalEl.style.left = '0px';
     if (this.modalEl.style.top !== '0px') this.modalEl.style.top = '0px';
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    const gap = EDGE_GAP;
-    let m = this.mouse || { x: Math.round(vw / 2), y: Math.round(vh * 0.28) };
-    if (this.dragX !== undefined && this.dragY !== undefined) m = { x: this.dragX, y: this.dragY };
 
     const rect = this.modalEl.getBoundingClientRect();
-    const w = rect.width || 320;
-    const h = rect.height || 200;
-    const maxX = Math.max(gap, vw - w - gap);
-    const maxY = Math.max(gap, vh - h - gap);
-    const x = Math.min(Math.max(gap, m.x + CELL_GAP), maxX);
-    const y = Math.min(Math.max(gap, m.y + CELL_GAP), maxY);
+    const width = rect.width;
+    const height = rect.height;
+    if (!width || !height) {
+      /*
+       * 还没量到真实尺寸（首次打开那一帧，卡片可能仍在入场动画里）。
+       * 这一帧**不定位**：先给一个保守位置，下一帧再量一次并按真实宽高钳位。
+       * 若这里用假宽度钳位，位置会随"哪一帧被量到"而变 —— 这正是"每次位置都不一样"的成因。
+       */
+      if (!this.placeRetried && typeof w.requestAnimationFrame === 'function') {
+        this.placeRetried = true;
+        w.requestAnimationFrame(() => {
+          this.placeRetried = false;
+          this.placeAtMouse();
+        });
+      }
+      if (!this.modalEl.style.transform) {
+        this.modalEl.style.transform = 'translate(' + Math.round(vw / 2 - 260) + 'px, ' + Math.round(vh * 0.2) + 'px)';
+      }
+      return;
+    }
+
+    let m = this.mouse || this.mousePoint();
+    if (this.dragX !== undefined && this.dragY !== undefined) m = { x: this.dragX, y: this.dragY };
+    const maxX = Math.max(EDGE_GAP, vw - width - EDGE_GAP);
+    const maxY = Math.max(EDGE_GAP, vh - height - EDGE_GAP);
+    const x = Math.min(Math.max(EDGE_GAP, m.x + CELL_GAP), maxX);
+    const y = Math.min(Math.max(EDGE_GAP, m.y + CELL_GAP), maxY);
     this.modalEl.style.transform = 'translate(' + Math.round(x) + 'px, ' + Math.round(y) + 'px)';
   }
 
@@ -1141,17 +1226,21 @@ class QuickPanelPlugin extends Plugin {
     this.config = null;
     this.configNotice = '';
     this.registry = null;
-    this.lastMouse = { x: 0, y: 0 };
 
-    // 鼠标位置：只记两个数字，不碰 DOM 结构（面板定位用）
-    this.registerDomEvent(document, 'mousemove', (evt) => {
-      this.lastMouse.x = evt.clientX;
-      this.lastMouse.y = evt.clientY;
-    });
-    this.registerDomEvent(document, 'contextmenu', (evt) => {
-      this.lastMouse.x = evt.clientX;
-      this.lastMouse.y = evt.clientY;
-    });
+    /*
+     * 鼠标位置：只给"面板所在的窗口"挂一个被动 mousemove（只记两个数字），
+     * 挂在面板打开时（见 QuickPanelModal.setView / ensureMouseTracking），
+     * 用 registerDomEvent 注册 → 插件停用自动注销。启动阶段零监听。
+     */
+    this.mousePoint = () => {
+      const d = this.lastPanelDoc || document;
+      const w = d.defaultView;
+      const s = w && w.__quickPanelMouse;
+      if (s && s.known) return { x: s.x, y: s.y, known: true };
+      const vw = w ? w.innerWidth : 1280;
+      const vh = w ? w.innerHeight : 800;
+      return { x: Math.round(vw / 2), y: Math.round(vh * 0.3), known: false };
+    };
 
     // 只读一次配置：读坏不覆盖，用空面板起步并提示
     const loaded = await this.readPanelConfig();
@@ -1159,17 +1248,17 @@ class QuickPanelPlugin extends Plugin {
     this.configNotice = loaded.notice;
     this.loadedFromDisk = loaded.fromDisk;
 
-    this.addRibbonIcon('layout-grid', '快接面板', () => this.openPanel());
+    this.addRibbonIcon('layout-grid', '快捷面板', () => this.openPanel());
 
     this.addCommand({
       id: 'open',
-      name: '打开快接面板',
+      name: '打开快捷面板',
       hotkeys: [{ modifiers: ['Mod', 'Alt'], key: ' ' }],
       callback: () => this.openPanel(),
     });
     this.addCommand({
       id: 'open-config',
-      name: '打开配置文件（快接面板.json）',
+      name: '打开配置文件（快捷面板.json）',
       callback: () => this.openConfigFile(),
     });
     // 故障排查用：打开面板后跑这条，把真实几何写进库根 .quick-panel-diag.txt（可随时删）
@@ -1191,10 +1280,30 @@ class QuickPanelPlugin extends Plugin {
   async readPanelConfig() {
     const adapter = this.app.vault.adapter;
     let exists = false;
+    let renameNotice = '';
     try {
       exists = await adapter.exists(this.configPath);
     } catch (e) {
       exists = false;
+    }
+    // 旧文件名迁移（面板改名那次留下的）：新名不存在、旧名存在 → 搬过去，内容一字不改
+    if (!exists) {
+      try {
+        const legacyExists = await adapter.exists(CONFIG_NAME_LEGACY);
+        if (legacyExists) {
+          const oldText = await adapter.read(CONFIG_NAME_LEGACY);
+          await adapter.write(this.configPath, oldText);
+          try {
+            await adapter.remove(CONFIG_NAME_LEGACY);
+          } catch (e) {
+            /* 删不掉旧的也无所谓：下次启动新名已存在，不会再迁 */
+          }
+          exists = true;
+          renameNotice = '已把 ' + CONFIG_NAME_LEGACY + ' 改名为 ' + CONFIG_NAME + '（内容未改动，格子都在）。';
+        }
+      } catch (e) {
+        /* 迁移失败就按"没有配置"走，不阻塞使用 */
+      }
     }
     if (!exists) {
       const fresh = normalizePanelConfig({ version: CONFIG_VERSION, panel: null, items: DEMO_ITEMS, recent: [] });
@@ -1238,7 +1347,7 @@ class QuickPanelPlugin extends Plugin {
         notice: '配置里有 ' + parsed.errors.length + ' 条格式不对，已忽略：' + parsed.errors.slice(0, 3).join('；'),
       };
     }
-    return { config: parsed, fromDisk: true, notice: '' };
+    return { config: parsed, fromDisk: true, notice: renameNotice };
   }
 
   async writePanelConfig(config, opts) {
@@ -1350,12 +1459,14 @@ class QuickPanelPlugin extends Plugin {
     };
     const styleOf = (el, props) => {
       if (!el) return '缺失';
-      const cs = window.getComputedStyle(el);
+      const cs = this.getWindow().getComputedStyle(el);
       return props.map((p) => p + '=' + cs.getPropertyValue(p)).join(' ');
     };
     const lines = [];
     lines.push('quick-panel 诊断 · ' + new Date().toISOString() + '（本文件可随时删除）');
-    lines.push('viewport ' + window.innerWidth + 'x' + window.innerHeight + ' dpr=' + window.devicePixelRatio);
+    const diagWin = this.modal ? this.modal.getWindow() : window;
+    lines.push('viewport ' + diagWin.innerWidth + 'x' + diagWin.innerHeight + ' dpr=' + diagWin.devicePixelRatio);
+    lines.push('鼠标：' + JSON.stringify(this.modal ? this.modal.mousePoint() : null) + '（known=true 表示拿到过真实 mousemove）');
     const modal = this.modal;
     if (!modal) {
       const el = document.querySelector('.modal-container.quick-panel');
@@ -1447,9 +1558,9 @@ class QuickPanelPlugin extends Plugin {
 
   openPanelWith(config) {
     this.commandRegistry().invalidate(); // 插件启用/停用会改命令表，每次打开重新解析
-    const modal = new QuickPanelModal(this.app, this, config, {
-      mouse: { x: this.lastMouse.x, y: this.lastMouse.y },
-    });
+    // 在主窗口里先取一次鼠标位置（面板一创建就会开始量自己的窗口，坐标必须提前定下来）
+    this.lastPanelDoc = document;
+    const modal = new QuickPanelModal(this.app, this, config, { mouse: this.mousePoint() });
     this.modal = modal;
     modal.open();
   }
@@ -1464,6 +1575,7 @@ module.exports.QuickPanelPlugin = QuickPanelPlugin;
 module.exports.QuickPanelModal = QuickPanelModal;
 // 纯函数（tools/test.mjs 离线断言用）
 module.exports.CONFIG_NAME = CONFIG_NAME;
+module.exports.CONFIG_NAME_LEGACY = CONFIG_NAME_LEGACY;
 module.exports.CONFIG_VERSION = CONFIG_VERSION;
 module.exports.RECENT_LIMIT = RECENT_LIMIT;
 module.exports.CELL_MIN = CELL_MIN;

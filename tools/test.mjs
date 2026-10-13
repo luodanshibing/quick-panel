@@ -79,6 +79,8 @@ class FakeElement {
     this.scrollCalls = 0;
     this.isConnected = true;
     this.value = '';
+    // 与真实 DOM 一致：每个元素都能拿到它所属的 document（main.js 靠 ownerDocument.defaultView 找窗口）
+    this.ownerDocument = globalThis.document || null;
   }
   get classes() {
     return Array.from(this.classList._s);
@@ -193,14 +195,26 @@ class FakeElement {
 globalThis.window = {
   innerWidth: 1200,
   innerHeight: 800,
+  devicePixelRatio: 1,
   setTimeout: (fn) => {
     fn();
     return 1;
   },
+  requestAnimationFrame: (fn) => {
+    fn();
+    return 1;
+  },
+  getComputedStyle: () => ({ getPropertyValue: () => '' }),
   addEventListener() {},
   removeEventListener() {},
 };
-globalThis.document = { body: new FakeElement('body'), addEventListener() {}, removeEventListener() {} };
+globalThis.document = {
+  body: new FakeElement('body'),
+  addEventListener() {},
+  removeEventListener() {},
+};
+// 与浏览器一致：document.defaultView 指回 window（main.js 靠它判定"面板在哪个窗口"）
+globalThis.document.defaultView = globalThis.window;
 
 class StubModal {
   constructor(app) {
@@ -283,7 +297,9 @@ ok(desc.length <= 40, '描述不超过 40 字（实际 ' + desc.length + ' 字�
 ok(/。$/.test(desc), '描述以句号收尾');
 ok(desc.indexOf('，') < 0 && desc.indexOf('、') < 0, '描述不罗列功能点（一句到底）');
 
-eq(QP.CONFIG_NAME, '快接面板.json', '配置文件名固定为 快接面板.json（可见、非点号隐藏名）');
+eq(QP.CONFIG_NAME, '快捷面板.json', '配置文件名固定为 快捷面板.json（可见、非点号隐藏名）');
+eq(QP.CONFIG_NAME_LEGACY, '快接面板.json', '保留旧文件名常量，用于自动迁移（改名不丢格子）');
+ok(/CONFIG_NAME_LEGACY/.test(SOURCE) && /adapter\.remove\(CONFIG_NAME_LEGACY\)/.test(SOURCE), '旧配置会被搬成新名并从库里移除');
 eq(QP.CONFIG_VERSION, 1, '配置结构版本 = 1');
 eq(QP.RECENT_LIMIT, 12, '「最近用过」上限 12 条');
 ok(existsSync(join(ROOT, 'tools', 'check-id.mjs')), 'tools/check-id.mjs 就位');
@@ -552,13 +568,21 @@ for (const needle of forbiddenInOnload) {
 ok((code.match(/listCommands\(/g) || []).length === 1, '全文件只有一处 listCommands（在 commandRegistry 里）');
 ok(code.indexOf('listCommands(') > code.indexOf('async onload()') + onloadBody.length - 1, 'listCommands 不在 onload 内（面板打开时才解析）');
 ok(/class QuickPanelModal extends Modal/.test(code), '面板是一个 Modal（可停在鼠标位置）');
-ok(/registerDomEvent\(document, 'mousemove'/.test(code), '鼠标位置来自缓存（只记两个数字）');
-ok(!/document\.addEventListener/.test(code), '不绕过 registerDomEvent 直接挂全局监听（卸载才干净）');
+ok(/this\.setView\(this\.modalEl\.ownerDocument \|\| document\)/.test(code), '面板打开时按"它所在的窗口"绑定视图（弹窗不会串坐标）');
+ok(/ensureMouseTracking/.test(code) && /registerDomEvent\(\s*d,\s*'mousemove'/.test(code), '鼠标只记两个数字，且用 registerDomEvent 注册（停用即注销）');
+ok(code.indexOf("getWindow()") > 0 && /ownerDocument\.defaultView/.test(code), '窗口统一由 ownerDocument.defaultView 取（主窗口/弹窗都对）');
+// 全局级 addEventListener 只允许两类：拖拽时临时挂的（配对 remove）、以及注释里说明的窗口判定
+const globalAdds = (code.match(/\bw\.addEventListener\(/g) || []).length;
+const globalRemoves = (code.match(/\bw\.removeEventListener\(/g) || []).length;
+ok(globalAdds > 0 && globalAdds === globalRemoves, '窗口级监听只有拖拽那一对临时挂载（挂几次就摘几次）');
+ok(!/\bdocument\.addEventListener\(/.test(code), '不绕过 registerDomEvent 直接挂 document 监听（卸载才干净）');
+ok(!/window\.addEventListener\(/.test(code), '不直接挂 window 监听');
 ok(/gridColumns\(/.test(code), '列数由 gridColumns 纯函数决定，不写死在 CSS');
 ok(!/setInterval/.test(code), '全文件没有 setInterval（面板生命周期不依赖定时器）');
-ok((code.match(/\.write\(/g) || []).length === 2, '全文件只有两处写盘调用（配置文件 + 诊断文件），没有第三个写点');
-ok((code.match(/adapter\.write\(/g) || []).length === 2, '两处写盘都走 vault.adapter.write');
+ok((code.match(/\.write\(/g) || []).length === 3, '写盘只有三处（配置文件本身 + 旧名迁移 + 诊断文件），没有第四个写点');
+ok((code.match(/adapter\.write\(/g) || []).length === 3, '三处写盘都走 vault.adapter.write');
 ok(code.indexOf("adapter.write(this.configPath") >= 0, '写盘目标之一就是配置文件的固定路径 this.configPath');
+ok(code.indexOf("adapter.write(this.configPath, oldText)") >= 0, '旧名迁移只把旧文件内容原样写给新名（不加工内容）');
 ok(code.indexOf("'.quick-panel-diag.txt'") >= 0, '另一处写盘是显式命名的诊断文件（可用完即删）');
 ok(!/adapter\.write\((?!this\.configPath|'\.quick-panel-diag\.txt')/.test(code), '不存在指向其它路径的写盘调用');
 ok(!/\.obsidian/.test(code), '源码里不出现 .obsidian（不碰插件配置目录）');
@@ -593,28 +617,6 @@ eq(proto.displayName.call(ctx, { type: 'folder', path: 'F Craftlab' }), 'F Craft
 /* ============ 7. 面板渲染冒烟（用极简假 DOM 真跑一遍 onOpen） ============ */
 
 group('面板渲染冒烟（假 DOM）');
-
-class FakeModal {
-  constructor(app) {
-    this.app = app;
-    this.modalEl = new FakeElement('div');
-    this.modalEl.addClass('modal-container');
-    this.modalEl.addClass('modal');
-    this.modalEl.addClass('quick-panel');
-    this.contentEl = new FakeElement('div');
-    this.contentEl.addClass('modal-content');
-    this.modalEl.appendChild(this.contentEl);
-    this.scope = { register() {} };
-    this.closed = 0;
-  }
-  open() {
-    this.onOpen();
-  }
-  close() {
-    this.closed += 1;
-    this.onClose();
-  }
-}
 
 /* 假库：两条真实存在的路径 + 一份"已经不存在"的路径 */
 const vaultFiles = {
@@ -661,18 +663,22 @@ const host = {
 
 function buildPanel(config, options) {
   const modal = new QP.QuickPanelModal(fakeApp, host, QP.normalizePanelConfig(config), options || {});
+  dbgModal = modal;
   if (options && options.corrupt) modal.config.corrupt = true;
-  // 用假 Modal 的 DOM 装配替换掉真 Modal 构造出的空对象
-  modal.modalEl = new FakeModal(fakeApp).modalEl;
+  // 面板所在的 DOM（相当于 Obsidian 的 .modal-container 根 + 卡片）
+  modal.modalEl = new FakeElement('div');
+  modal.modalEl.addClass('modal-container');
+  modal.modalEl.addClass('quick-panel');
   modal.containerEl = modal.modalEl;
   modal.contentEl = new FakeElement('div');
   modal.contentEl.addClass('modal-content');
   modal.modalEl.appendChild(modal.contentEl);
   modal.scope = { register() {} };
-  modal.registerDomEvent = () => {}; // Modal 基类提供的注册入口（假 DOM 里不需要真的挂）
+  modal.registerDomEvent = () => {}; // 假 DOM 里不需要真的挂监听
   modal.onOpen();
   return modal;
 }
+let dbgModal = null;
 
 const panelConfig = {
   version: 1,
