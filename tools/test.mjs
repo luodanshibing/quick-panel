@@ -1,0 +1,792 @@
+/*
+ * quick-panel · 纯函数与启动开销断言（离线可跑，不需要 Obsidian）
+ *
+ *   用法：node tools/test.mjs
+ *   退出码：0 = 全绿；非 0 = 有失败（部署/提交前必须为 0，这是铁律）
+ *
+ * 覆盖六块：
+ *   1) 版本三件套与项目约定（id / 版本 / 一句话描述 / versions.json / id 未占用由 check-id 管）
+ *   2) 配置归一化与校验（任何脏输入都不抛异常、坏条目记入 errors）
+ *   3) 图标来源判定（Lucide / emoji / 库内图片 / 认不出）
+ *   4) 自适应列数与「最近用过」去重截断
+ *   5) 失效检测 / 过滤 / JSON 往返（坏 JSON 不覆盖）
+ *   6) 启动开销与「只写一个文件」的源码级断言（onload 里不许出现扫描型 API）
+ */
+
+import { readFileSync, existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const ROOT = join(HERE, '..');
+
+let pass = 0;
+let fail = 0;
+const failures = [];
+function ok(cond, label) {
+  if (cond) {
+    pass += 1;
+  } else {
+    fail += 1;
+    failures.push(label);
+  }
+}
+function eq(actual, expected, label) {
+  const same = JSON.stringify(actual) === JSON.stringify(expected);
+  if (!same) {
+    fail += 1;
+    failures.push(label + ' → 实际 ' + JSON.stringify(actual) + ' / 期望 ' + JSON.stringify(expected));
+    return;
+  }
+  pass += 1;
+}
+function group(title) {
+  console.log('\n· ' + title);
+}
+
+/* ============ 0. 装入插件源码（obsidian 用桩件顶替） ============ */
+
+const SOURCE = readFileSync(join(ROOT, 'main.js'), 'utf8');
+const MANIFEST = JSON.parse(readFileSync(join(ROOT, 'manifest.json'), 'utf8'));
+const VERSIONS = JSON.parse(readFileSync(join(ROOT, 'versions.json'), 'utf8'));
+const STYLES = readFileSync(join(ROOT, 'styles.css'), 'utf8');
+
+/*
+ * 极简假 DOM。只实现面板真的用到的那些 API，并照 Obsidian 的约定实现 createEl：
+ * 一个参数 = 标签名，第二个参数 = { cls, text, attr }，返回值就是新建的元素。
+ * 有了它，「面板渲染」这段真代码能在 Node 里真跑一遍（第 7 组断言）。
+ */
+class FakeElement {
+  constructor(tag) {
+    this.tagName = String(tag || 'div').toUpperCase();
+    this.tag = this.tagName.toLowerCase();
+    this.children = [];
+    this.parentElement = null;
+    this.classList = { _s: new Set() };
+    this.style = {
+      _m: {},
+      setProperty(k, v) {
+        this._m[k] = v;
+      },
+      getPropertyValue(k) {
+        return this._m[k];
+      },
+    };
+    this.attrs = {};
+    this._text = '';
+    this._listeners = {};
+    this.scrollCalls = 0;
+    this.isConnected = true;
+    this.value = '';
+  }
+  get classes() {
+    return Array.from(this.classList._s);
+  }
+  addClass(c) {
+    String(c).split(/\s+/).filter(Boolean).forEach((x) => this.classList._s.add(x));
+  }
+  removeClass(c) {
+    String(c).split(/\s+/).filter(Boolean).forEach((x) => this.classList._s.delete(x));
+  }
+  hasClass(c) {
+    return this.classList._s.has(c);
+  }
+  toggleClass(c, on) {
+    const want = on === undefined ? !this.hasClass(c) : !!on;
+    if (want) this.addClass(c);
+    else this.removeClass(c);
+  }
+  setAttribute(k, v) {
+    this.attrs[k] = String(v);
+  }
+  getAttribute(k) {
+    return Object.prototype.hasOwnProperty.call(this.attrs, k) ? this.attrs[k] : null;
+  }
+  setText(t) {
+    this._text = String(t);
+    this.children = [];
+  }
+  getText() {
+    if (this.children.length) return this.children.map((c) => c.getText()).join('');
+    return this._text;
+  }
+  appendChild(el) {
+    el.parentElement = this;
+    this.children.push(el);
+    return el;
+  }
+  removeChild(el) {
+    this.children = this.children.filter((c) => c !== el);
+  }
+  empty() {
+    this.children.forEach((c) => {
+      c.parentElement = null;
+    });
+    this.children = [];
+  }
+  createEl(tag, o) {
+    const el = new FakeElement(tag);
+    if (o && o.cls) el.addClass(o.cls);
+    if (o && o.text !== undefined) el.setText(o.text);
+    if (o && o.attr) Object.keys(o.attr).forEach((k) => el.setAttribute(k, o.attr[k]));
+    this.appendChild(el);
+    return el;
+  }
+  createDiv(o) {
+    return this.createEl('div', o);
+  }
+  createSpan(o) {
+    return this.createEl('span', o);
+  }
+  addEventListener(type, fn) {
+    (this._listeners[type] = this._listeners[type] || []).push(fn);
+  }
+  removeEventListener(type, fn) {
+    this._listeners[type] = (this._listeners[type] || []).filter((f) => f !== fn);
+  }
+  fire(type, evt) {
+    (this._listeners[type] || []).forEach((f) => f(evt || { preventDefault() {}, target: this }));
+  }
+  click() {
+    this.fire('click');
+  }
+  focus() {}
+  getBoundingClientRect() {
+    return { left: 100, top: 100, width: 600, height: 300, right: 700, bottom: 400 };
+  }
+  scrollIntoView() {
+    this.scrollCalls += 1;
+  }
+  closest(sel) {
+    let node = this;
+    const want = String(sel).replace(/^\./, '');
+    while (node) {
+      if (node.hasClass && node.hasClass(want)) return node;
+      node = node.parentElement;
+    }
+    return null;
+  }
+  querySelector(sel) {
+    const want = String(sel).replace(/^\./, '');
+    const stack = this.children.slice();
+    while (stack.length) {
+      const el = stack.shift();
+      if (el.hasClass && el.hasClass(want)) return el;
+      stack.push(...el.children);
+    }
+    return null;
+  }
+  querySelectorAll(sel) {
+    const want = String(sel).replace(/^\./, '');
+    const out = [];
+    const stack = this.children.slice();
+    while (stack.length) {
+      const el = stack.shift();
+      if (el.hasClass && el.hasClass(want)) out.push(el);
+      stack.push(...el.children);
+    }
+    return out;
+  }
+}
+
+globalThis.window = {
+  innerWidth: 1200,
+  innerHeight: 800,
+  setTimeout: (fn) => {
+    fn();
+    return 1;
+  },
+  addEventListener() {},
+  removeEventListener() {},
+};
+globalThis.document = { body: new FakeElement('body'), addEventListener() {}, removeEventListener() {} };
+
+class StubModal {
+  constructor(app) {
+    this.app = app;
+    this.scope = { register() {} };
+    this.containerEl = {};
+    this.modalEl = {};
+    this.contentEl = {};
+  }
+  open() {}
+  close() {}
+}
+class StubPlugin {
+  constructor(app, manifest) {
+    this.app = app;
+    this.manifest = manifest;
+  }
+  addCommand() {}
+  addRibbonIcon() {}
+  registerDomEvent() {}
+  registerEvent() {}
+}
+
+const obsidianStub = new Proxy(  {
+    Plugin: StubPlugin,
+    Modal: StubModal,
+    Notice: class Notice {},
+    Menu: class Menu {},
+    setIcon() {},
+    getIconIds() {
+      return ['lucide-settings', 'lucide-home', 'home'];
+    },
+    normalizePath: (p) => String(p).replace(/\\/g, '/'),
+  },
+  {
+    get(target, prop) {
+      if (prop in target) return target[prop];
+      return class StubAny {};
+    },
+  }
+);
+
+const require_ = createRequire(import.meta.url);
+const Module_ = require_('node:module');
+// 只拦 'obsidian'，其余照旧（注意：不能把补丁再挂回 _load，否则无限递归）
+const originalLoad = Module_._load.bind(Module_);
+Module_._load = function (request, parent, isMain) {
+  if (request === 'obsidian') return obsidianStub;
+  return originalLoad(request, parent, isMain);
+};
+
+let QP = null;
+try {
+  QP = require_(join(ROOT, 'main.js'));
+  ok(true, 'main.js 能在 Node 下被 require（纯函数可离线测）');
+} catch (e) {
+  ok(false, 'main.js 能被 require：' + (e && e.message));
+}
+
+if (!QP) {
+  console.log('\n通过 ' + pass + ' 项，失败 ' + fail + ' 项');
+  for (const f of failures) console.log('  ✗ ' + f);
+  process.exit(1);
+}
+
+/* ============ 1. 版本三件套与项目约定 ============ */
+
+group('版本三件套与项目约定');
+eq(MANIFEST.id, 'quick-panel', 'manifest id = quick-panel（= 仓库名 = 部署文件夹名）');
+eq(MANIFEST.name, 'Quick Panel', 'manifest name = Quick Panel');
+ok(/^\d+\.\d+\.\d+$/.test(MANIFEST.version), 'version 形如 x.y.z');
+ok(MANIFEST.isDesktopOnly === false, 'isDesktopOnly = false');
+ok(!!MANIFEST.minAppVersion, '有 minAppVersion');
+eq(Array.isArray(VERSIONS[MANIFEST.version]), false, 'versions.json 不写数组形态');
+eq(VERSIONS[MANIFEST.version], MANIFEST.minAppVersion, 'versions.json 的 minAppVersion 取自本插件 manifest 自身的值');
+
+const desc = String(MANIFEST.description || '');
+ok(desc.length > 0 && desc.indexOf('\n') < 0, '描述是一句话（不含换行）');
+ok(desc.length <= 40, '描述不超过 40 字（实际 ' + desc.length + ' 字）');
+ok(/。$/.test(desc), '描述以句号收尾');
+ok(desc.indexOf('，') < 0 && desc.indexOf('、') < 0, '描述不罗列功能点（一句到底）');
+
+eq(QP.CONFIG_NAME, '快接面板.json', '配置文件名固定为 快接面板.json（可见、非点号隐藏名）');
+eq(QP.CONFIG_VERSION, 1, '配置结构版本 = 1');
+eq(QP.RECENT_LIMIT, 12, '「最近用过」上限 12 条');
+ok(existsSync(join(ROOT, 'tools', 'check-id.mjs')), 'tools/check-id.mjs 就位');
+ok(existsSync(join(ROOT, 'tools', 'deploy.ps1')), 'tools/deploy.ps1 就位');
+ok(existsSync(join(ROOT, 'LICENSE')), 'LICENSE 就位');
+
+/* ============ 2. 配置归一化与校验 ============ */
+
+group('配置归一化与校验');
+
+eq(QP.normalizePanelConfig(undefined).items, [], 'undefined → 空条目（不抛异常）');
+eq(QP.normalizePanelConfig(null).errors, [], 'null 不算「坏文件」（首次运行走的就是这条）');
+ok(QP.normalizePanelConfig(42).errors.length === 1, '根节点是数字 → 记 1 条 errors');
+eq(QP.normalizePanelConfig({ panel: { columns: 'auto' } }).panel.columns, 'auto', 'columns 默认 auto');
+eq(QP.normalizePanelConfig({ panel: { columns: 100 } }).panel.columns, 'auto', 'columns 越界（100）→ 回退 auto');
+eq(QP.normalizePanelConfig({ panel: { columns: 4 } }).panel.columns, 4, 'columns 合法（4）保留');
+eq(QP.normalizePanelConfig({ panel: { iconSize: 9999 } }).panel.iconSize, 96, 'iconSize 上限 96');
+eq(QP.normalizePanelConfig({ panel: { iconSize: 1 } }).panel.iconSize, 20, 'iconSize 下限 20');
+eq(QP.normalizePanelConfig({ panel: { showRecent: false } }).panel.showRecent, false, 'showRecent 开关可关');
+eq(QP.normalizePanelConfig({ items: 'nope' }).items, [], 'items 不是数组 → 空（不炸）');
+
+const dirty = {
+  version: 1,
+  items: [
+    { type: 'command', id: 'app:reload', label: '重载' },
+    { type: 'command', id: '   ' },
+    { type: 'file', path: 'A/B.md' },
+    { type: 'folder' },
+    { type: 'url', url: 'https://x' },
+    { type: 'command', id: 'x', icon: 123 },
+    { type: 'command', id: 'y', level: 9 },
+    null,
+  ],
+};
+const dn = QP.normalizePanelConfig(dirty);
+eq(dn.items.length, 2, '脏配置里只有 2 条能留（其余丢弃）');
+eq(dn.errors.length, 6, '被丢弃的 6 条全部记入 errors（不静默吞掉）');
+ok(dn.errors[0].indexOf('第 2 条') === 0, 'errors 指明第几条');
+
+eq(QP.validateItem({ type: 'command', id: 'a' }).valid, true, '命令条目：有 id 即合法');
+eq(QP.validateItem({ type: 'command', id: '  ' }).valid, false, '命令条目：id 是空白 = 非法');
+eq(QP.validateItem({ type: 'file', path: 'A.md' }).valid, true, '文件条目：库内相对路径合法');
+eq(QP.validateItem({ type: 'file', path: '/abs/A.md' }).valid, false, '文件条目：绝对路径非法（同步会坏）');
+eq(QP.validateItem({ type: 'file', path: 'C:\\x\\A.md' }).valid, false, '文件条目：Windows 绝对路径非法');
+eq(QP.validateItem({ type: 'folder', path: 'F Craftlab' }).valid, true, '文件夹条目合法');
+eq(QP.validateItem({ type: 'file', path: 'A.md', icon: '' }).valid, true, 'icon 允许空串（回退默认图标）');
+eq(QP.validateItem({ type: 'file', path: 'A.md', icon: 5 }).valid, false, 'icon 不是字符串 = 非法');
+eq(QP.validateItem({ type: 'command', id: 'a', level: 3 }).valid, true, 'level 2–6 合法');
+eq(QP.validateItem({ type: 'command', id: 'a', level: 1 }).valid, false, 'level 1 非法（一级标题不进面板）');
+
+eq(QP.itemKey({ type: 'command', id: 'app:reload' }), 'command:app:reload', '命令唯一键 = command:<id>');
+eq(QP.itemKey({ type: 'file', path: 'a\\b.md' }), 'file:a/b.md', '文件唯一键做了分隔符规整');
+
+/* ============ 3. 图标来源判定 ============ */
+
+group('图标来源判定');
+eq(QP.iconSpecOf('settings').kind, 'lucide', 'lucide 名');
+eq(QP.iconSpecOf('settings').value, 'settings', 'lucide 名原样（小写）');
+eq(QP.iconSpecOf('Settings').value, 'settings', 'lucide 名大小写不敏感');
+eq(QP.iconSpecOf('⚙️').kind, 'emoji', 'emoji 判定');
+eq(QP.iconSpecOf('🚩').kind, 'emoji', 'emoji（非 ASCII）判定');
+eq(QP.iconSpecOf('图片/图标.png').kind, 'image', '库内 png → image');
+eq(QP.iconSpecOf('assets\\logo.SVG').kind, 'image', '反斜杠 + 大写扩展名也是库内图片');
+eq(QP.iconSpecOf('D:\\pic\\a.png').kind, 'image', '绝对路径仍按图片处理，但带提示');
+ok(QP.iconSpecOf('D:\\pic\\a.png').reason.length > 0, '绝对路径图片给出提示文案');
+eq(QP.iconSpecOf('https://x.com/a.png').kind, 'none', '网址图标本版不支持');
+eq(QP.iconSpecOf('').kind, 'none', '空 = 用默认图标');
+const emojiSpec = QP.iconSpecOf('两个 汉字');
+eq(emojiSpec.kind, 'none', '认不出的写法 → none（面板会画默认图标 + 提示）');
+ok(emojiSpec.reason.length > 0, '认不出时给出原因（不静默）');
+
+const candidates = QP.iconCandidates(['lucide-home', 'home', 'x']);
+ok(candidates.indexOf('home') >= 0, '候选清单含 home');
+eq(candidates.filter((n) => n === 'home').length, 1, '候选清单去重');
+ok(candidates.length >= 100, '只有兜底清单时也有足量候选（实际 ' + candidates.length + ' 个）');
+eq(QP.iconCandidates(null).length, QP.LUCIDE_CANDIDATES.length, '拿不到运行期清单 → 用兜底清单');
+
+/* ============ 4. 自适应列数与最近用过 ============ */
+
+group('自适应列数与最近用过');
+eq(QP.gridColumns(760, 72, 8), 9, '760px / 72px 格 → 9 列');
+eq(QP.gridColumns(300, 72, 8), 3, '300px 窄容器 → 3 列');
+eq(QP.gridColumns(0, 72, 8), 2, '宽度 0（还没布局）→ 保底 2 列');
+eq(QP.gridColumns(100000, 72, 8), 12, '超宽 → 上限 12 列');
+eq(QP.gridColumns(50, 72, 8), 2, '极窄 → 下限 2 列');
+eq(QP.gridColumns(72, 72, 0), 2, '缺 gap 参数也不崩（默认 0）');
+ok(QP.gridColumns(1000, 72, 8) > QP.gridColumns(500, 72, 8), '列数随宽度单调不减');
+
+const r1 = QP.pushRecent([], { type: 'command', id: 'a', usedAt: 1 }, 12);
+eq(r1.length, 1, '首次推进写入 1 条');
+const r2 = QP.pushRecent(r1, { type: 'command', id: 'b', usedAt: 2 }, 12);
+eq(r2.map((r) => r.id), ['b', 'a'], '新的在最前');
+const r3 = QP.pushRecent(r2, { type: 'command', id: 'a', usedAt: 3 }, 12);
+eq(r3.map((r) => r.id), ['a', 'b'], '同 id 去重并提到最前');
+eq(r3[0].usedAt, 3, '时间戳更新为最新');
+const many = [];
+for (let i = 0; i < 20; i += 1) many.push({ type: 'command', id: 'c' + i, usedAt: i });
+const r4 = QP.pushRecent(many, { type: 'file', path: 'A.md', usedAt: 99 }, 12);
+eq(r4.length, 12, '超过上限只留 12 条');
+eq(r4[0].path, 'A.md', '文件项与命令项按各自键去重');
+eq(QP.pushRecent([], { type: 'url', url: 'x' }, 12), [], '不认识的类型不进最近记录');
+
+/* ============ 5. 失效检测 / 过滤 / JSON 往返 ============ */
+
+group('失效检测 / 过滤 / JSON 往返');
+const items = [
+  { type: 'command', id: 'app:reload', nameSnapshot: '重载应用' },
+  { type: 'command', id: 'quickadd:choice:x', label: '快速捕捉' },
+  { type: 'file', path: '1 Obsidian/页面/Home.md' },
+  { type: 'folder', path: 'F Craftlab' },
+];
+const files = { '1 Obsidian/页面/Home.md': { path: '1 Obsidian/页面/Home.md' }, 'F Craftlab': { path: 'F Craftlab', children: [] } };
+const missing = QP.findMissingItems(items, {
+  findCommand: (id) => (id === 'app:reload' ? { id: id } : undefined),
+  getAbstractFileByPath: (p) => files[p],
+  isFolder: (f) => !!f.children,
+});
+eq(missing.length, 1, '四条里只有失效命令被标出');
+eq(missing[0].kind, 'command', '标出的是 command 类型');
+eq(missing[0].key, 'quickadd:choice:x', '标出的键是命令 id');
+
+const missingFile = QP.findMissingItems([{ type: 'file', path: '没了.md' }], {
+  findCommand: () => undefined,
+  getAbstractFileByPath: () => undefined,
+});
+eq(missingFile[0].kind, 'file-missing', '库内找不到的文件 → file-missing');
+
+const wrongKind = QP.findMissingItems([{ type: 'folder', path: '1 Obsidian/页面/Home.md' }], {
+  getAbstractFileByPath: (p) => files[p],
+  isFolder: () => false,
+});
+eq(wrongKind[0].kind, 'not-a-folder', '声明文件夹却指向文件 → not-a-folder');
+
+eq(QP.filterItems(items, '').length, 4, '空查询 = 全量');
+eq(QP.filterItems(items, '重载').map((i) => i.id), ['app:reload'], '按 label 中文匹配');
+eq(QP.filterItems(items, '快速').map((i) => i.id), ['quickadd:choice:x'], '按 label 匹配命令');
+eq(QP.filterItems(items, 'RELOAD').map((i) => i.id), ['app:reload'], '大小写不敏感');
+eq(QP.filterItems(items, 'craftlab').length, 1, '按路径匹配');
+eq(QP.filterItems(items, '不存在的词').length, 0, '无匹配返回空');
+
+const roundTrip = QP.normalizePanelConfig({
+  version: 1,
+  panel: { columns: 'auto', showRecent: true, iconSize: 40, showSearch: true },
+  items: [
+    { type: 'command', id: 'app:reload', label: ' 重载 ', icon: 'refresh', nameSnapshot: '重载应用' },
+    { type: 'file', path: 'a\\b.md', label: '文章' },
+  ],
+  recent: [{ type: 'command', id: 'app:reload', usedAt: 7 }],
+});
+const text = QP.serializePanelText(roundTrip);
+ok(text.endsWith('\n'), '落盘文本以换行收尾');
+const back = QP.parsePanelFile(text);
+eq(back.corrupt, false, '写出去的文本能读回来');
+eq(back.items[0].label, '重载', 'label 的首尾空格被规整');
+eq(back.items[1].path, 'a/b.md', '路径分隔符被规整');
+eq(back.recent[0].usedAt, 7, 'recent 时间戳原样保留');
+eq(QP.parsePanelFile(QP.serializePanelText(back)).items, back.items, '序列化 → 解析 → 再序列化稳定（幂等）');
+
+const broken = QP.parsePanelFile('{ 这不是 JSON');
+eq(broken.corrupt, true, '坏 JSON 被识别（不抛异常）');
+eq(broken.items, [], '坏 JSON → 空面板起步');
+ok(broken.parseError.length > 0, '坏 JSON 带上原因（提示用）');
+eq(QP.serializePanelText(broken).indexOf('这不是 JSON'), -1, '坏内容不会被写回去（不可能覆盖用户文件）');
+
+/* ============ 6. 启动开销与「只写一个文件」的源码断言 ============ */
+
+group('启动开销与源码约束');
+
+function methodBody(text, signature) {
+  const i = text.indexOf(signature);
+  if (i < 0) return '';
+  let depth = 0;
+  let started = false;
+  for (let j = i; j < text.length; j += 1) {
+    const ch = text[j];
+    if (ch === '{') {
+      depth += 1;
+      started = true;
+    } else if (ch === '}') {
+      depth -= 1;
+      if (started && depth === 0) return text.slice(i, j + 1);
+    }
+  }
+  return '';
+}
+
+function stripComments(text) {
+  let out = '';
+  let state = 'code';
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i];
+    const n = text[i + 1];
+    if (state === 'code') {
+      if (c === '/' && n === '*') {
+        state = 'block';
+        i += 1;
+      } else if (c === '/' && n === '/') {
+        state = 'line';
+        i += 1;
+      } else if (c === "'") {
+        state = 'single';
+        out += c;
+      } else if (c === '"') {
+        state = 'double';
+        out += c;
+      } else if (c === '`') {
+        state = 'template';
+        out += c;
+      } else {
+        out += c;
+      }
+      continue;
+    }
+    if (state === 'block') {
+      if (c === '*' && n === '/') {
+        state = 'code';
+        i += 1;
+      }
+      continue;
+    }
+    if (state === 'line') {
+      if (c === '\n') {
+        state = 'code';
+        out += c;
+      }
+      continue;
+    }
+    out += c;
+    if (state === 'single' && c === '\\') {
+      out += text[i + 1] || '';
+      i += 1;
+      continue;
+    }
+    if (state === 'double' && c === '\\') {
+      out += text[i + 1] || '';
+      i += 1;
+      continue;
+    }
+    if (state === 'single' && c === "'") state = 'code';
+    else if (state === 'double' && c === '"') state = 'code';
+    else if (state === 'template' && c === '`') state = 'code';
+  }
+  return out;
+}
+
+const code = stripComments(SOURCE);
+const onloadBody = methodBody(code, 'async onload()');
+ok(onloadBody.length > 100, '取到 onload 源码');
+
+const forbiddenInOnload = [
+  'listCommands',
+  'vault.getFiles',
+  'getAllLoadedFiles',
+  'recurseChildren',
+  'setInterval',
+  'setTimeout',
+  'requestUrl',
+  'fetch(',
+  'registerInterval',
+  'workspace.on(',
+];
+for (const needle of forbiddenInOnload) {
+  ok(onloadBody.indexOf(needle) < 0, 'onload 里不出现 ' + needle + '（启动零扫描）');
+}
+
+ok((code.match(/listCommands\(/g) || []).length === 1, '全文件只有一处 listCommands（在 commandRegistry 里）');
+ok(code.indexOf('listCommands(') > code.indexOf('async onload()') + onloadBody.length - 1, 'listCommands 不在 onload 内（面板打开时才解析）');
+ok(/class QuickPanelModal extends Modal/.test(code), '面板是一个 Modal（可停在鼠标位置）');
+ok(/registerDomEvent\(document, 'mousemove'/.test(code), '鼠标位置来自缓存（只记两个数字）');
+ok(!/document\.addEventListener/.test(code), '不绕过 registerDomEvent 直接挂全局监听（卸载才干净）');
+ok(/gridColumns\(/.test(code), '列数由 gridColumns 纯函数决定，不写死在 CSS');
+ok(!/setInterval/.test(code), '全文件没有 setInterval（面板生命周期不依赖定时器）');
+ok((code.match(/\.write\(/g) || []).length === 1, '全文件只有一处写盘调用（只可能写那一个 JSON）');
+ok((code.match(/adapter\.write/g) || []).length === 1, '唯一写盘走 vault.adapter.write');
+ok(!/\.obsidian/.test(code), '源码里不出现 .obsidian（不碰插件配置目录）');
+ok(!/vault\.modify|vault\.create|vault\.delete/.test(code), '不创建/删除库内文件');
+ok(/class QuickPanelModal extends Modal/.test(code) && /this\.cellNodes = \[\]/.test(code), 'onClose 里释放网格节点引用');
+
+/* 视图类不许覆盖 Obsidian 的保留方法名（simple-memos 的教训） */
+const modalBody = code.slice(code.indexOf('class QuickPanelModal'), code.indexOf('class ConfirmLikeModal'));
+const reserved = ['addAction', 'onResize', 'getState', 'setState', 'onPaneMenu', 'onMoreOptionsMenu'];
+for (const name of reserved) {
+  ok(modalBody.indexOf(name + '(') < 0, '面板类不覆盖 Obsidian 的 ' + name + '()');
+}
+
+/* 样式文件 */
+ok(/\.modal-container\.quick-panel\s*\{/.test(STYLES), 'styles.css 里给面板容器单独定位（不靠默认居中）');
+ok(/grid-template-columns: repeat\(var\(--qp-cols/.test(STYLES), 'CSS 的列数由 --qp-cols 变量驱动');
+ok(/\.qp-cell[\s\S]{0,400}box-shadow: none/.test(STYLES), '格子按钮强制清掉主题底色/阴影');
+
+/* 常用方法：用最简对象直接调用（不建 DOM） */
+const fakeHost = {
+  commandRegistry: () => ({ find: () => undefined, findByName: () => undefined }),
+};
+const proto = QP.QuickPanelModal.prototype;
+const ctx = { host: fakeHost, app: { vault: {} } };
+eq(proto.displayName.call(ctx, { type: 'command', id: 'app:reload', label: '重载' }), '重载', 'displayName 优先用 label');
+eq(proto.displayName.call(ctx, { type: 'command', id: 'app:reload', nameSnapshot: '重载应用' }), '重载应用', 'label 空时用 nameSnapshot');
+eq(proto.displayName.call(ctx, { type: 'command', id: 'app:reload' }), 'app:reload', '都没有时用命令 id（不显示空白格）');
+eq(proto.displayName.call(ctx, { type: 'file', path: 'A/B/首页.md' }), '首页', '文件项用去扩展名的文件名');
+eq(proto.displayName.call(ctx, { type: 'folder', path: 'F Craftlab' }), 'F Craftlab', '文件夹项用末级目录名');
+
+/* ============ 7. 面板渲染冒烟（用极简假 DOM 真跑一遍 onOpen） ============ */
+
+group('面板渲染冒烟（假 DOM）');
+
+class FakeModal {
+  constructor(app) {
+    this.app = app;
+    this.modalEl = new FakeElement('div');
+    this.modalEl.addClass('modal-container');
+    this.modalEl.addClass('modal');
+    this.modalEl.addClass('quick-panel');
+    this.contentEl = new FakeElement('div');
+    this.contentEl.addClass('modal-content');
+    this.modalEl.appendChild(this.contentEl);
+    this.scope = { register() {} };
+    this.closed = 0;
+  }
+  open() {
+    this.onOpen();
+  }
+  close() {
+    this.closed += 1;
+    this.onClose();
+  }
+}
+
+/* 假库：两条真实存在的路径 + 一份"已经不存在"的路径 */
+const vaultFiles = {
+  '1 Obsidian/页面/Home.md': { path: '1 Obsidian/页面/Home.md' },
+  'F Craftlab': { path: 'F Craftlab', children: [] },
+};
+
+const fakeApp = {
+  vault: {
+    getAbstractFileByPath: (p) => vaultFiles[p],
+    adapter: { getResourcePath: (p) => 'app://local/' + p, getFullPath: (p) => 'E:/Dnotes/' + p },
+    getFiles: () => Object.keys(vaultFiles).map((k) => vaultFiles[k]),
+  },
+  workspace: { activeEditor: null, getLeaf: () => ({ openFile: async () => {} }) },
+  commands: {
+    listCommands: () => [
+      { id: 'app:reload', name: '重载应用' },
+      { id: 'app:open-settings', name: '设置' },
+    ],
+    executeCommandById: () => true,
+    findCommand: (id) => (id === 'app:reload' ? { id: id } : undefined),
+  },
+  internalPlugins: { getEnabledPluginById: () => ({ revealInFolder() {} }) },
+};
+
+const notices = [];
+const host = {
+  commandRegistry() {
+    return {
+      find: (id) => (id === 'app:reload' ? { id: id, name: '重载应用' } : undefined),
+      findByName: () => undefined,
+    };
+  },
+  touchRecent() {},
+  savePanelConfig() {},
+  openConfigFile() {},
+  revealConfigFile() {},
+  runCommandById() {
+    return true;
+  },
+  reopen() {},
+  notices: notices,
+};
+
+function buildPanel(config, options) {
+  const modal = new QP.QuickPanelModal(fakeApp, host, QP.normalizePanelConfig(config), options || {});
+  if (options && options.corrupt) modal.config.corrupt = true;
+  // 用假 Modal 的 DOM 装配替换掉真 Modal 构造出的空对象
+  modal.modalEl = new FakeModal(fakeApp).modalEl;
+  modal.containerEl = modal.modalEl;
+  modal.contentEl = new FakeElement('div');
+  modal.contentEl.addClass('modal-content');
+  modal.modalEl.appendChild(modal.contentEl);
+  modal.scope = { register() {} };
+  modal.registerDomEvent = () => {}; // Modal 基类提供的注册入口（假 DOM 里不需要真的挂）
+  modal.onOpen();
+  return modal;
+}
+
+const panelConfig = {
+  version: 1,
+  panel: { columns: 'auto', showRecent: true, iconSize: 40, showSearch: true },
+  items: [
+    { type: 'command', id: 'app:reload', label: '重载', icon: 'refresh-cw' },
+    { type: 'command', id: 'quickadd:choice:x', label: '快速捕捉', icon: 'zap' },
+    { type: 'file', path: '1 Obsidian/页面/Home.md', label: '首页', icon: 'home' },
+    { type: 'folder', path: 'F Craftlab', icon: 'folder' },
+    { type: 'file', path: '没了.md', label: '旧笔记', icon: '🚩' },
+  ],
+  recent: [{ type: 'command', id: 'gone:cmd', usedAt: 10 }, { type: 'file', path: '没在面板.md', usedAt: 9 }],
+};
+
+try {
+  const modal = buildPanel(panelConfig, { mouse: { x: 300, y: 200 } });
+  const cells = modal.contentEl.querySelectorAll('qp-cell');
+  eq(cells.length, 5, '5 条配置 → 5 个格子');
+  eq(cells[0].getText(), '重载', '格子显示 label');
+  eq(cells[3].getText(), 'F Craftlab', '没写 label 的文件夹 → 用末级目录名');
+  eq(cells[1].hasClass('is-missing'), true, '失效命令被标灰');
+  eq(cells[4].hasClass('is-missing'), true, '库内找不到的文件被标灰');
+  eq(cells[0].hasClass('is-missing'), false, '正常命令不标灰');
+  ok(cells[2].getAttribute('title').indexOf('首页') === 0, '格子 title 是完整名称（悬停可看全）');
+  ok(cells[1].getAttribute('title').indexOf('重新绑定') > 0, '失效命令的 title 说明可按下重新绑定');
+
+  const status = modal.contentEl.querySelector('qp-status');
+  ok(status.getText().indexOf('2 项') >= 0, '底部状态报出失效数量：' + status.getText());
+  ok(status.getText().indexOf('命令/文件已找不到') > 0, '状态文案说明了是找不到');
+
+  const header = modal.contentEl.querySelector('qp-count');
+  ok(header.getText().indexOf('5 格') === 0, '头部显示格子总数');
+
+  const search = modal.contentEl.querySelector('qp-search-input');
+  ok(!!search, '搜索框已渲染');
+  search.value = '首页';
+  search.fire('input');
+  eq(modal.contentEl.querySelectorAll('qp-cell').length, 1, '过滤后只留匹配的格子');
+  eq(modal.visible.length, 1, '内部可见列表同步收缩');
+
+  const grid = modal.contentEl.querySelector('qp-grid');
+  eq(modal.columns, 10, '1200px 视口 → 10 列（面板宽度上限 860px）');
+  eq(grid.style.getPropertyValue('--qp-cols'), '10', '列数写进 --qp-cols（CSS 不写死）');
+  eq(grid.style.getPropertyValue('--qp-cell'), '40px', '格子尺寸来自配置');
+  ok(modal.modalEl.style.getPropertyValue('--qp-width').indexOf('px') > 0, '面板宽度按列数算出来（不再自我循环）');
+
+  ok(modal.contentEl.querySelector('qp-recent-row').children.length >= 1, '最近用过分组已渲染');
+  ok(modal.contentEl.querySelector('qp-footer') !== null, '底部区域已渲染');
+
+  const modal2 = buildPanel({ version: 1, items: [], recent: [], panel: { showRecent: false, showSearch: false } });
+  ok(modal2.contentEl.querySelector('qp-empty') !== null, '空面板给明确占位文案（不是白屏）');
+  eq(modal2.contentEl.querySelectorAll('qp-search-input').length, 0, '关掉搜索后不渲染搜索框');
+  eq(modal2.contentEl.querySelectorAll('qp-recent').length, 0, '关掉最近用过不渲染该分组');
+
+  const brokenParsed = QP.parsePanelFile('{坏');
+  const broken = buildPanel(
+    {
+      version: 1,
+      panel: QP.normalizePanelSettings(null),
+      items: [],
+      recent: [],
+      errors: [],
+      corrupt: brokenParsed.corrupt,
+      parseError: brokenParsed.parseError,
+    },
+    { corrupt: true }
+  );
+  ok(broken.config.corrupt === true, '坏配置标记传到了面板');
+  ok(broken.contentEl.querySelector('qp-status').getText().indexOf('读坏') >= 0, '坏配置在面板里明确提示（不静默）');
+
+  // 键盘：方向键移动高亮、Esc 与 Enter 不炸
+  const nav = buildPanel(panelConfig);
+  nav.setHighlight(0);
+  nav.onKeyDown({ key: 'ArrowRight', target: { tagName: 'DIV' }, preventDefault() {} });
+  eq(nav.highlight, 1, '右方向键移动一格');
+  nav.onKeyDown({ key: 'ArrowDown', target: { tagName: 'DIV' }, preventDefault() {} });
+  eq(nav.highlight, 1, '只有一行时按下不越界（5 格 < 10 列）');
+  nav.onKeyDown({ key: 'End', target: { tagName: 'DIV' }, preventDefault() {} });
+  eq(nav.highlight, nav.visible.length - 1, 'End 跳最后一格');
+  nav.onKeyDown({ key: 'Home', target: { tagName: 'DIV' }, preventDefault() {} });
+  eq(nav.highlight, 0, 'Home 跳第一格');
+  nav.onKeyDown({ key: 'ArrowUp', target: { tagName: 'DIV' }, preventDefault() {} });
+  eq(nav.highlight, 0, '到头不越界');
+  nav.onKeyDown({ key: 'x', target: { tagName: 'DIV' }, preventDefault() {} });
+  ok(nav.query === 'x', '在面板上直接打字即过滤（不必先点搜索框）');
+  nav.onKeyDown({ key: 'Escape', target: { tagName: 'DIV' }, preventDefault() {} });
+  eq(nav.query, '', 'Esc 先清空过滤词');
+
+  // 多行网格：23 格 / 10 列 → 3 行（10/10/3），上下键按「行」走而不是硬加列数
+  const manyItems = [];
+  for (let i = 0; i < 23; i += 1) manyItems.push({ type: 'command', id: 'app:reload', label: '第' + i + '格' });
+  const nav2 = buildPanel({ version: 1, items: manyItems, recent: [], panel: { showRecent: false } });
+  eq(nav2.rows, [10, 10, 3], '行分布 10/10/3（23 格 / 10 列）');
+  nav2.setHighlight(8);
+  nav2.onKeyDown({ key: 'ArrowDown', target: { tagName: 'DIV' }, preventDefault() {} });
+  eq(nav2.highlight, 18, '按下 → 同一列下一行（8 → 18）');
+  nav2.onKeyDown({ key: 'ArrowUp', target: { tagName: 'DIV' }, preventDefault() {} });
+  eq(nav2.highlight, 8, '按上回到原格');
+  nav2.setHighlight(22);
+  nav2.onKeyDown({ key: 'ArrowUp', target: { tagName: 'DIV' }, preventDefault() {} });
+  eq(nav2.highlight, 12, '最后一行的第 3 格（22）上移落在上一行第 3 格（12）');
+  nav2.setHighlight(19);
+  nav2.onKeyDown({ key: 'ArrowDown', target: { tagName: 'DIV' }, preventDefault() {} });
+  eq(nav2.highlight, 22, '从倒数第二行往下落到最后一行的同列（19 → 22）');
+  nav2.setHighlight(20);
+  nav2.onKeyDown({ key: 'ArrowDown', target: { tagName: 'DIV' }, preventDefault() {} });
+  eq(nav2.highlight, 20, '目标行没有这一列就不动（20 已在最后一行，按下仍是 20）');
+} catch (e) {
+  ok(false, '面板渲染冒烟抛异常：' + (e && e.stack ? e.stack.split('\n').slice(0, 3).join(' | ') : e));
+}
+
+/* ============ 结果 ============ */
+
+console.log('\n通过 ' + pass + ' 项，失败 ' + fail + ' 项');
+if (fail) {
+  for (const f of failures) console.log('  ✗ ' + f);
+  console.log('\n有失败 → 不许部署、不许提交（铁律）');
+} else {
+  console.log('全绿 ✓');
+}
+process.exit(fail === 0 ? 0 : 1);

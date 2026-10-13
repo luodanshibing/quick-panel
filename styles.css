@@ -1,0 +1,415 @@
+/*
+ * Quick Panel（快接面板）样式
+ *
+ * 三条约束：
+ *  1) 只作用于本插件自己的 DOM（.quick-panel / .qp-*），不碰 Obsidian 全局组件；
+ *  2) 列数由 JS 用 --qp-cols 变量给出（gridColumns 纯函数唯一决定），CSS 不写死列数；
+ *  3) 图案基于 Obsidian 的主题变量，亮/暗主题都跟着走。
+ *
+ * 一个必须重写的默认值：Obsidian 的 .modal-container 默认靠 flex + transform 居中，
+ * 本面板要停在鼠标位置，所以持有 .quick-panel 的那个容器改成固定定位（其它弹窗不受影响）。
+ */
+
+/* ---------- 面板容器：停在鼠标位置 ---------- */
+
+/* 面板持有两个 class：modal-container 与 quick-panel */
+.modal-container.quick-panel {
+  position: fixed;
+  display: block;
+  align-items: stretch;
+  justify-content: flex-start;
+  left: 0;
+  top: 0;
+  transform: none;
+  margin: 0;
+  padding: 0;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* 左键拖拽头部时不要选中文字、不要出现文本光标 */
+body.qp-dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+
+/* ---------- 面板卡片 ---------- */
+
+.quick-panel .modal-bg,
+.modal-container.qp-confirm .modal-bg {
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.quick-panel .modal,
+.modal-container.qp-confirm .modal {
+  width: var(--qp-width, 500px);
+  max-width: calc(100vw - 24px);
+  padding: 0;
+  border-radius: 12px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.quick-panel .modal-close-button {
+  display: none;
+}
+
+/* 主题经常给 button 加底色与内阴影；本面板里除 .qp-btn 外一律透明 */
+.quick-panel button,
+.modal-container.qp-confirm button {
+  background: transparent;
+  box-shadow: none;
+}
+
+.modal-container.qp-confirm button.qp-btn {
+  background: var(--interactive-accent);
+}
+
+.modal-container.qp-confirm button.qp-btn.is-ghost {
+  background: transparent;
+}
+
+.quick-panel .modal-content {
+  max-height: min(80vh, 640px);
+  overflow: auto;
+  padding: 10px 12px 8px;
+}
+
+/* ---------- 头部 ---------- */
+
+.qp-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 2px 10px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  cursor: grab;
+}
+
+.qp-header:active {
+  cursor: grabbing;
+}
+
+.qp-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.qp-title-text {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-normal);
+  white-space: nowrap;
+}
+
+.qp-count {
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.qp-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.qp-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.qp-icon-btn:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+/* ---------- 过滤框 ---------- */
+
+.qp-search {
+  padding: 10px 2px 0;
+}
+
+.qp-search-input {
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  font-size: 13px;
+  border-radius: 8px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-modifier-form-field);
+  color: var(--text-normal);
+}
+
+.qp-search-input:focus {
+  outline: none;
+  border-color: var(--interactive-accent);
+}
+
+/* ---------- 图标网格 ---------- */
+
+.qp-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--qp-cols, 6), minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px 2px;
+}
+
+.qp-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  height: auto;
+  min-height: calc(var(--qp-cell, 40px) + 34px);
+  padding: 10px 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-normal);
+  box-shadow: none;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+/* 有些主题给 button 加了底色或高度，这里强制还原 */
+.qp-cell,
+.qp-cell:hover,
+.qp-cell:focus,
+.qp-cell:active {
+  background: transparent;
+  box-shadow: none;
+}
+
+.qp-cell:hover {
+  background: var(--background-modifier-hover);
+}
+
+.qp-cell.is-active {
+  background: var(--background-modifier-hover);
+  border-color: var(--interactive-accent);
+}
+
+.qp-cell.is-missing {
+  opacity: 0.5;
+}
+
+.qp-cell.is-missing .qp-icon svg {
+  filter: grayscale(1);
+}
+
+.qp-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--qp-cell, 40px);
+  height: var(--qp-cell, 40px);
+  color: var(--text-muted);
+}
+
+.qp-cell:hover .qp-icon,
+.qp-cell.is-active .qp-icon {
+  color: var(--text-normal);
+}
+
+.qp-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.qp-icon-img {
+  object-fit: contain;
+  border-radius: 4px;
+}
+
+.qp-icon-emoji {
+  font-size: calc(var(--qp-cell, 40px) * 0.78);
+  line-height: 1;
+}
+
+.qp-cell-label {
+  width: 100%;
+  font-size: 11.5px;
+  line-height: 1.25;
+  text-align: center;
+  color: var(--text-normal);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
+}
+
+.qp-cell.is-missing .qp-cell-label {
+  color: var(--text-faint);
+}
+
+.qp-empty {
+  grid-column: 1 / -1;
+  padding: 18px 8px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-faint);
+  text-align: center;
+}
+
+/* ---------- 最近用过 ---------- */
+
+.qp-recent {
+  padding: 8px 2px 4px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.qp-recent-label {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-bottom: 6px;
+}
+
+.qp-recent-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.qp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.qp-chip:hover {
+  color: var(--text-normal);
+  border-color: var(--interactive-accent);
+}
+
+.qp-chip.is-missing {
+  opacity: 0.5;
+}
+
+.qp-chip .svg-icon {
+  width: 13px;
+  height: 13px;
+}
+
+.qp-recent-empty {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+/* ---------- 底部状态 ---------- */
+
+.qp-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 2px 2px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.qp-status {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-warning, var(--text-muted));
+}
+
+.qp-status.is-empty {
+  display: none;
+}
+
+.qp-hint {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+/* ---------- 确认弹窗（重新绑定等） ---------- */
+
+.modal-container.qp-confirm {
+  position: fixed;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-container.qp-confirm .modal {
+  width: min(460px, calc(100vw - 32px));
+}
+
+.qp-confirm .modal-content {
+  padding: 16px 18px 12px;
+}
+
+.qp-confirm-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+.qp-confirm-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.qp-confirm-line {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-normal);
+  word-break: break-all;
+}
+
+.qp-confirm-line.is-muted {
+  color: var(--text-faint);
+}
+
+.qp-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.qp-btn {
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.qp-btn.is-ghost {
+  background: transparent;
+  color: var(--text-muted);
+}

@@ -1,0 +1,14 @@
+# Build output / scratch (this plugin has no build step)
+node_modules/
+build/
+*.log
+
+# Obsidian plugin runtime state (settings live in the vault, not in the repo)
+data.json
+
+# OS / editor noise
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+.idea/
