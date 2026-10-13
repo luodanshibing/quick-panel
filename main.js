@@ -23,6 +23,7 @@ const {
   Menu,
   SuggestModal,
   Setting,
+  PluginSettingTab,
   setIcon,
   getIconIds,
 } = require('obsidian');
@@ -1330,7 +1331,7 @@ class QuickPanelModal extends Modal {
         },
       ]
     );
-    modal.addInput({ value: current, placeholder: '图标名 / emoji / 图片路径' });
+    modal.addInput({ value: current, placeholder: '图标名 / emoji / 图片路径', preview: true });
     modal.open();
   }
 
@@ -1339,7 +1340,7 @@ class QuickPanelModal extends Modal {
     const menu = new Menu();
     menu.addItem((i) =>
       i.setTitle('设置').setIcon('settings').onClick(() => {
-        this.silentClose();
+        // 不要先关面板再开设置：Obsidian 的弹窗栈会把紧接着打开的弹窗一起收掉（实测"点了没反应"）。
         this.host.openSettings();
       })
     );
@@ -1391,11 +1392,23 @@ class ConfirmLikeModal extends Modal {
     });
     if (this.inputSpec) {
       const wrap = this.contentEl.createDiv({ cls: 'qp-confirm-input' });
-      this.inputEl = wrap.createEl('input', {
-        cls: 'qp-search-input',
-        attr: { type: 'text', placeholder: this.inputSpec.placeholder || '', value: this.inputSpec.value || '' },
-      });
-      this.inputEl.value = this.inputSpec.value || '';
+      if (this.inputSpec.preview) {
+        // 图标实时预览（用户 2026-10-14 要求：输入名称时想看效果）
+        this.previewEl = wrap.createDiv({ cls: 'qp-icon-preview' });
+        this.inputEl = wrap.createEl('input', {
+          cls: 'qp-search-input',
+          attr: { type: 'text', placeholder: this.inputSpec.placeholder || '', value: this.inputSpec.value || '' },
+        });
+        this.inputEl.value = this.inputSpec.value || '';
+        this.inputEl.addEventListener('input', () => this.paintPreview(this.inputEl.value));
+        this.paintPreview(this.inputEl.value);
+      } else {
+        this.inputEl = wrap.createEl('input', {
+          cls: 'qp-search-input',
+          attr: { type: 'text', placeholder: this.inputSpec.placeholder || '', value: this.inputSpec.value || '' },
+        });
+        this.inputEl.value = this.inputSpec.value || '';
+      }
     }
     const foot = this.contentEl.createDiv({ cls: 'qp-confirm-actions' });
     this.actions.forEach((a) => {
@@ -1411,10 +1424,45 @@ class ConfirmLikeModal extends Modal {
     cancel.addEventListener('click', () => this.close());
   }
 
-  /** 给确认窗加一个输入框（改名用） */
+  /** 给确认窗加一个输入框（改名用）；spec.preview=true 时同时给图标实时预览 */
   addInput(spec) {
     this.inputSpec = spec || {};
     return this;
+  }
+
+  /** 在预览框里画出当前输入对应的图标（Lucide 名 / emoji / 库内图片） */
+  paintPreview(value) {
+    if (!this.previewEl) return;
+    this.previewEl.empty();
+    const spec = iconSpecOf(asString(value));
+    let labelText = '';
+    if (spec.kind === 'emoji') {
+      this.previewEl.createSpan({ cls: 'qp-icon-preview-emoji', text: spec.value });
+      labelText = 'emoji';
+    } else if (spec.kind === 'image') {
+      const file = this.app && this.app.vault ? this.app.vault.getAbstractFileByPath(spec.value) : null;
+      if (file) {
+        const src = this.app.vault.adapter.getResourcePath(spec.value);
+        this.previewEl.createEl('img', { cls: 'qp-icon-preview-img', attr: { src: src, alt: '' } });
+        labelText = '库内图片';
+      } else {
+        labelText = '找不到这张图片';
+      }
+    } else {
+      const box = this.previewEl.createDiv({ cls: 'qp-icon-preview-svg' });
+      const name = spec.kind === 'lucide' ? spec.value : DEFAULT_ICON;
+      try {
+        setIcon(box, name);
+      } catch (e) {
+        /* 名字不合法 */
+      }
+      const drawn = box.querySelector ? box.querySelector('svg') : null;
+      if (spec.kind === 'lucide' && !drawn) labelText = '这个图标名在本机不存在';
+      else if (spec.kind === 'lucide') labelText = name;
+      else if (spec.value) labelText = '认不出的写法，将用默认图标';
+      else labelText = '默认图标';
+    }
+    this.previewEl.createSpan({ cls: 'qp-icon-preview-label', text: labelText });
   }
 
   getInputValue() {
@@ -1487,10 +1535,108 @@ function modalIconCandidates(runtimeNames) {
 }
 
 /**
- * 设置面板（用户 2026-10-14 要求："增加设置面板，可以做个性化选择"）。
- *
- * 用普通 Modal 而不是 PluginSettingTab：这样从面板的 ⋯ →「设置」直接打开，不用去 Obsidian 设置页翻。
- * 每改一项都立即写入配置并让面板生效（关掉设置后重开面板）。
+ * 显示设置的四行 UI（设置弹窗与 Obsidian 设置页共用同一份实现，避免两处口径漂移）。
+ * 每改一项：立即写盘 → 让面板生效（重开面板）。
+ */
+function renderPanelSettingsRows(container, plugin, onAfterChange) {
+  const write = (patch) => {
+    const current = plugin.config.panel;
+    const next = normalizePanelConfig({
+      version: CONFIG_VERSION,
+      panel: Object.assign({}, current, patch),
+      items: plugin.config.items,
+      recent: plugin.config.recent,
+    });
+    plugin.config = next;
+    plugin.writePanelConfig(next, { silent: true });
+    if (typeof onAfterChange === 'function') onAfterChange(next.panel);
+  };
+
+  const rows = [
+    ['显示「最近用过」', '面板底部一行，显示最近执行过的命令', (s) => s.addToggle((t) => t.setValue(!!panel().showRecent).onChange((v) => write({ showRecent: !!v })))],
+    ['显示过滤框', '面板里本来就可以直接打字过滤，默认关掉更清爽', (s) => s.addToggle((t) => t.setValue(!!panel().showSearch).onChange((v) => write({ showSearch: !!v })))],
+    ['格子大小', '图标格子的边长（像素）', (s) => s.addSlider((sl) => sl.setLimits(24, 72, 4).setValue(panel().iconSize).setDynamicTooltip().onChange((v) => write({ iconSize: v })))],
+    ['每行列数', '自动 = 按窗口宽度自适应', (s) =>
+      s.addDropdown((d) =>
+        d
+          .addOption('auto', '自动')
+          .addOption('4', '4 列')
+          .addOption('5', '5 列')
+          .addOption('6', '6 列')
+          .addOption('8', '8 列')
+          .setValue(String(panel().columns))
+          .onChange((v) => write({ columns: v === 'auto' ? 'auto' : Number(v) }))
+      )],
+  ];
+  function panel() {
+    return plugin.config.panel;
+  }
+  rows.forEach(function (row) {
+    const setting = new Setting(container).setName(row[0]).setDesc(row[1]);
+    row[2](setting);
+  });
+  return write;
+}
+
+/** 「恢复默认显示设置」（只重置显示，不动格子内容） */
+function resetPanelDisplaySettings(plugin) {
+  const defaults = normalizePanelSettings(null);
+  const next = normalizePanelConfig({
+    version: CONFIG_VERSION,
+    panel: defaults,
+    items: plugin.config.items,
+    recent: plugin.config.recent,
+  });
+  plugin.config = next;
+  plugin.writePanelConfig(next, { silent: true });
+  return next;
+}
+
+/** Obsidian「设置 → 第三方插件 → Quick Panel」里的那一页（用户 2026-10-14 反馈"系统设置里没有"） */
+class QuickPanelSettingTab extends PluginSettingTab {
+  constructor(app, plugin) {
+    super(app, plugin);
+    this.plugin = plugin;
+  }
+
+  display() {
+    const { containerEl } = this;
+    containerEl.empty();
+    containerEl.createEl('h2', { text: '快捷面板' });
+    containerEl.createEl('p', {
+      cls: 'setting-item-description',
+      text: '面板内容与顺序在面板内直接编辑：点「＋」添加，右键格子改名 / 换图标 / 移动 / 删除。',
+    });
+    renderPanelSettingsRows(containerEl, this.plugin);
+    new Setting(containerEl)
+      .setName('打开配置文件')
+      .setDesc('快捷面板.json 位于库根，可手动编辑')
+      .addButton((b) => b.setButtonText('打开').onClick(() => this.plugin.openConfigFile()));
+    new Setting(containerEl)
+      .setName('恢复默认显示设置')
+      .setDesc('只重置上面的显示项，不动面板格子')
+      .addButton((b) =>
+        b.setButtonText('恢复').onClick(() => {
+          resetPanelDisplaySettings(this.plugin);
+          new Notice('显示设置已恢复默认（格子内容不动）');
+          this.display();
+        })
+      );
+  }
+
+  hide() {
+    // 关闭设置页时把面板重开一次，让改动立刻可见
+    try {
+      this.plugin.reopen();
+    } catch (e) {
+      /* 忽略 */
+    }
+  }
+}
+
+/**
+ * 设置面板（面板 ⋯ →「设置」）。用普通 Modal 而不是 PluginSettingTab：
+ * 这样从面板里直接打开，不用去系统设置页翻；两处共用同一个 rows 渲染函数。
  */
 class QuickPanelSettingsModal extends Modal {
   constructor(app, plugin) {
@@ -1503,7 +1649,6 @@ class QuickPanelSettingsModal extends Modal {
     this.modalEl.addClass('qp-settings');
     if (this.titleEl && this.titleEl.parentElement) this.titleEl.parentElement.hide();
     else if (this.titleEl && this.titleEl.hide) this.titleEl.hide();
-    this.contentEl.createDiv({ cls: 'qp-confirm-title', text: '快捷面板设置' });
     this.render();
   }
 
@@ -1515,64 +1660,7 @@ class QuickPanelSettingsModal extends Modal {
   render() {
     this.contentEl.empty();
     this.contentEl.createDiv({ cls: 'qp-confirm-title', text: '快捷面板设置' });
-    let panel = this.plugin.config.panel;
-    const write = (patch) => {
-      panel = Object.assign({}, panel, patch);
-      const next = normalizePanelConfig({
-        version: CONFIG_VERSION,
-        panel: panel,
-        items: this.plugin.config.items,
-        recent: this.plugin.config.recent,
-      });
-      this.plugin.config = next;
-      this.plugin.writePanelConfig(next, { silent: true });
-      this.render();
-    };
-
-    new Setting(this.contentEl)
-      .setName('显示「最近用过」')
-      .setDesc('面板底部一行，显示最近执行过的命令')
-      .addToggle((t) =>
-        t.setValue(!!panel.showRecent).onChange((v) => {
-          write({ showRecent: !!v });
-        })
-      );
-    new Setting(this.contentEl)
-      .setName('显示过滤框')
-      .setDesc('面板里本来就可以直接打字过滤，默认关掉更清爽')
-      .addToggle((t) =>
-        t.setValue(!!panel.showSearch).onChange((v) => {
-          write({ showSearch: !!v });
-        })
-      );
-    new Setting(this.contentEl)
-      .setName('格子大小')
-      .setDesc('图标格子的边长（像素）')
-      .addSlider((s) =>
-        s
-          .setLimits(24, 72, 4)
-          .setValue(panel.iconSize)
-          .setDynamicTooltip()
-          .onChange((v) => {
-            write({ iconSize: v });
-          })
-      );
-    new Setting(this.contentEl)
-      .setName('每行列数')
-      .setDesc('自动 = 按窗口宽度自适应')
-      .addDropdown((d) =>
-        d
-          .addOption('auto', '自动')
-          .addOption('4', '4 列')
-          .addOption('5', '5 列')
-          .addOption('6', '6 列')
-          .addOption('8', '8 列')
-          .setValue(String(panel.columns))
-          .onChange((v) => {
-            write({ columns: v === 'auto' ? 'auto' : Number(v) });
-          })
-      );
-
+    renderPanelSettingsRows(this.contentEl, this.plugin);
     const foot = this.contentEl.createDiv({ cls: 'qp-settings-actions' });
     const openBtn = foot.createEl('button', { cls: 'qp-btn is-ghost', attr: { type: 'button' } });
     openBtn.setText('打开配置文件');
@@ -1580,15 +1668,7 @@ class QuickPanelSettingsModal extends Modal {
     const resetBtn = foot.createEl('button', { cls: 'qp-btn is-ghost', attr: { type: 'button' } });
     resetBtn.setText('恢复默认显示设置');
     resetBtn.addEventListener('click', () => {
-      const defaults = normalizePanelSettings(null);
-      const next = normalizePanelConfig({
-        version: CONFIG_VERSION,
-        panel: defaults,
-        items: this.plugin.config.items,
-        recent: this.plugin.config.recent,
-      });
-      this.plugin.config = next;
-      this.plugin.writePanelConfig(next, { silent: true });
+      resetPanelDisplaySettings(this.plugin);
       new Notice('显示设置已恢复默认（格子内容不动）');
       this.render();
     });
@@ -1753,6 +1833,9 @@ class QuickPanelPlugin extends Plugin {
     this.loadedFromDisk = loaded.fromDisk;
 
     this.addRibbonIcon('layout-grid', '快捷面板', () => this.openPanel());
+
+    // Obsidian 系统设置里的插件页（用户 2026-10-14 反馈"系统设置里没有这个插件的设置页面"）
+    this.addSettingTab(new QuickPanelSettingTab(this.app, this));
 
     this.addCommand({
       id: 'open',

@@ -1360,13 +1360,17 @@ try {
     eq(threw, null, '两边都查不到时 runCommand 不抛异常（而不是静默崩掉）');
   }
 
-  /* 设置面板 + 换图标修复（用户 2026-10-14 反馈） */
+  /* 设置面板 + 系统设置页 + 换图标修复（用户 2026-10-14 反馈） */
   {
-    ok(/new Setting\(this\.contentEl\)/.test(SOURCE), '设置面板用 Obsidian 的 Setting 组件搭（不是自绘）');
-    ok(/class QuickPanelSettingsModal extends Modal/.test(SOURCE), '设置面板存在');
+    ok(/new Setting\(container\)/.test(SOURCE), '设置项用 Obsidian 的 Setting 组件搭（设置弹窗与系统设置页共用一份实现）');
+    ok(/class QuickPanelSettingsModal extends Modal/.test(SOURCE), '设置弹窗存在（面板 ⋯ → 设置）');
+    ok(/class QuickPanelSettingTab extends PluginSettingTab/.test(SOURCE), '系统设置页存在（设置 → 第三方插件 → Quick Panel）');
+    ok(/addSettingTab\(new QuickPanelSettingTab/.test(SOURCE), 'onload 里注册了系统设置页');
     ok(/setTitle\('设置'\)/.test(SOURCE) && /openSettings\(\)/.test(SOURCE), '面板「⋯」菜单里有「设置」入口');
+    ok(!/silentClose\(\);\s*\n\s*this\.host\.openSettings\(\)/.test(SOURCE), '打开设置前不再先关面板（会被弹窗栈一起收掉，就是"点了没反应"）');
     ok(!/setPlaceholder\(/.test(stripComments(SOURCE)), '不再调用 SuggestModal 上不存在的 setPlaceholder（"换图标"点了没反应的原因）');
-    ok(/modal\.addInput\(\{ value: current, placeholder: '图标名 \/ emoji \/ 图片路径' \}\)/.test(SOURCE), '换图标改成输入框弹窗（与"改名"同一路径）');
+    ok(/preview: true/.test(SOURCE), '换图标弹窗开了实时预览');
+    ok(/addInput\(\{ value: current, placeholder: '图标名 \/ emoji \/ 图片路径'/.test(SOURCE), '换图标改成输入框弹窗（与"改名"同一路径）');
 
     // 设置面板能渲染、点开关能写配置
     const writes = [];
@@ -1396,6 +1400,33 @@ try {
     ok(settings.contentEl.children.length >= 2, '设置面板渲染出标题与操作区（Setting 组件自行挂到 contentEl，实际 ' + settings.contentEl.children.length + ' 个自有节点）');
     eq(settingInstances.length, 4, '设置面板建了 4 项设置（最近用过 / 过滤框 / 格子大小 / 每行列数），实际 ' + settingInstances.length);
     eq(typeof settings.onClose, 'function', '设置面板关闭时会重开面板以生效');
+
+    // 图标实时预览：emoji / 图片 / 认不出的写法各给一句说明
+    const previewModal = new QP.ConfirmLikeModal(fakeApp, '换图标', [], [{ label: '保存', onClick() {} }]);
+    previewModal.modalEl = new FakeElement('div');
+    previewModal.modalEl.addClass('modal-container');
+    previewModal.modalEl.addClass('quick-panel');
+    previewModal.contentEl = new FakeElement('div');
+    previewModal.modalEl.appendChild(previewModal.contentEl);
+    previewModal.titleEl = new FakeElement('div');
+    previewModal.addInput({ value: '', placeholder: 'x', preview: true });
+    let previewErr = null;
+    const previewTexts = [];
+    try {
+      previewModal.onOpen();
+      ['🚩', 'logo.png', 'settings', '两个 汉字', ''].forEach((v) => {
+        previewModal.paintPreview(v);
+        previewTexts.push(v + ' → ' + previewModal.previewEl.getText());
+      });
+    } catch (e) {
+      previewErr = e;
+    }
+    eq(previewErr, null, '图标预览不抛异常：' + (previewErr && previewErr.message));
+    ok(previewModal.previewEl !== null, '预览容器已创建');
+    ok(previewTexts[0].indexOf('emoji') >= 0, 'emoji 输入标注 emoji：' + previewTexts[0]);
+    ok(previewTexts[1].indexOf('找不到这张图片') >= 0, '图片路径找不到时明说：' + previewTexts[1]);
+    ok(previewTexts[3].indexOf('认不出') >= 0, '认不出的写法给出说明：' + previewTexts[3]);
+    ok(previewTexts[4].indexOf('默认图标') >= 0, '留空时说明将用默认图标：' + previewTexts[4]);
   }
 
   {

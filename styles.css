@@ -504,6 +504,43 @@
   width: 100%;
 }
 
+/* 图标实时预览 */
+
+.qp-icon-preview {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  min-height: 34px;
+}
+
+.qp-icon-preview-svg {
+  width: 28px;
+  height: 28px;
+  color: var(--text-normal);
+}
+
+.qp-icon-preview-svg svg {
+  width: 100%;
+  height: 100%;
+}
+
+.qp-icon-preview-emoji {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.qp-icon-preview-img {
+  max-width: 32px;
+  max-height: 32px;
+  object-fit: contain;
+}
+
+.qp-icon-preview-label {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
 /* ---------- 确认弹窗（重新绑定等） ---------- */
 .modal-container.qp-confirm {
   position: fixed;
