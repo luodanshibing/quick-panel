@@ -729,9 +729,25 @@ ok(!/\.quick-panel \.modal-close-button\s*\{/.test(STYLES), '不再使用那个�
 ok(/\.qp-cell[\s\S]{0,400}box-shadow: none/.test(STYLES), '格子按钮强制清掉主题底色/阴影');
 
 /* 常用方法：用最简对象直接调用（不建 DOM） */
-const fakeHost = {
+/** 所有假 host 都需要的配置变更订阅（面板 onOpen 会订阅，用于就地刷新） */
+function cfgSub() {
+  return {
+    onConfigChanged(fn) {
+      this._listeners = this._listeners || [];
+      this._listeners.push(fn);
+      return () => {
+        this._listeners = (this._listeners || []).filter((x) => x !== fn);
+      };
+    },
+    notifyConfigChanged() {
+      (this._listeners || []).forEach((fn) => fn());
+    },
+  };
+}
+
+const fakeHost = Object.assign({
   commandRegistry: () => ({ find: () => undefined, findByName: () => undefined }),
-};
+}, cfgSub());
 const proto = QP.QuickPanelModal.prototype;
 const ctx = { host: fakeHost, app: { vault: {} } };
 eq(proto.displayName.call(ctx, { type: 'command', id: 'app:reload', label: '重载' }), '重载', 'displayName 优先用 label');
@@ -769,7 +785,7 @@ const fakeApp = {
 };
 
 const notices = [];
-const host = {
+const host = Object.assign({
   commandRegistry() {
     return {
       find: (id) => (id === 'app:reload' ? { id: id, name: '重载应用' } : undefined),
@@ -785,7 +801,7 @@ const host = {
   },
   reopen() {},
   notices: notices,
-};
+}, cfgSub());
 
 function buildPanel(config, options) {
   const modal = new QP.QuickPanelModal(fakeApp, host, QP.normalizePanelConfig(config), options || {});
@@ -1122,6 +1138,7 @@ const clickHost = {
   reopen() {},
 };
 
+Object.assign(clickHost, cfgSub());
 function clickCell(label) {
   clickLog.length = 0;
   noticeSink.items.length = 0;
@@ -1579,6 +1596,60 @@ eq(matchAll.length, 3, '包含"设置"的都命中（前缀 + 路径 + 中间）
 eq(QP.filterPickerItems(manyItems, 'zzz').length, 0, '无匹配 → 空');
 eq(QP.filterPickerItems(manyItems, '', 2).length, 2, 'limit 生效');
 
+/* 10.7 移动后必须"就地刷新"（用户 2026-10-14：右键移动后要关闭面板再打开才生效）
+   机制：moveItem 写盘 → notifyConfigChanged → 面板订阅回调 rebuild。
+   这里同时钉住"所有增删改路径都会 notify"这条口径，避免再出现某一个操作漏接线。
+   ⚠️ 写成函数在文件末尾调用：它依赖后面定义的 makeHost / CountingVaultAdapter。 */
+async function testMoveRefreshesInPlace() {
+  const h3 = await makeHost([
+    { type: 'command', id: 'app:reload', label: '甲' },
+    { type: 'command', id: 'app:open-settings', label: '乙' },
+    { type: 'command', id: 'workspace:new-tab', label: '丙' },
+  ]);
+  const p3 = h3.plugin;
+  let notified = 0;
+  p3._configListeners = [];
+  p3.onConfigChanged(() => {
+    notified += 1;
+  });
+  p3.notifyConfigChanged();
+
+  // 用真实原型方法（makeHost 里 commandFor 等依赖已补齐的部分）
+  const modal = new QP.QuickPanelModal(clickApp, p3, p3.config, {});
+  modal.modalEl = new FakeElement('div');
+  modal.modalEl.addClass('modal-container');
+  modal.modalEl.addClass('quick-panel');
+  modal.contentEl = new FakeElement('div');
+  modal.modalEl.appendChild(modal.contentEl);
+  modal.scope = { register() {} };
+  modal.registerDomEvent = () => {};
+  p3.modal = modal;
+  p3.reopen = () => {
+    throw new Error('不该走 reopen（应当就地 rebuild）');
+  };
+  p3.commandRegistry = () => ({ all: [], find: () => undefined, findByName: () => undefined, invalidate() {} });
+  p3.itemDisplayName = (it) => (it && it.label) || '';
+  modal.onOpen();
+
+  const first = modal.items[0].item;
+  const before = modal.items.map((v) => modal.displayName(v.item));
+  const beforeNodes = modal.contentEl.children.length;
+
+  const moved = modal.applyMove(first, 2);
+  const after = modal.items.map((v) => modal.displayName(v.item));
+  ok(moved, 'applyMove 返回 true（移动确实执行了）');
+  ok(after.join(',') !== before.join(','), '移动后面板顺序当场改变：' + before.join(',') + ' → ' + after.join(','));
+  eq(after[2], before[0], '被移动的格子到了新位置');
+  eq(modal.contentEl.children.length, beforeNodes, 'rebuild 后内容节点数不变（不叠加）');
+  eq(modal.contentEl.querySelectorAll('qp-header').length, 1, 'rebuild 后仍只有一个头部');
+  ok(notified >= 2, 'moveItem 会通过 notifyConfigChanged 通知面板（实际 ' + notified + ' 次）');
+
+  // 删除也应就地生效
+  const delTarget = modal.items[0].item;
+  modal.host.removeItem(delTarget);
+  eq(modal.items.length, 2, '删除后面板上的格子数当场减少（不需要关掉重开）');
+}
+
 /* 10.5 图标候选清洗 */
 const iconCands = QP.modalIconCandidates(['lucide-settings', 'settings', '🚩', 'not a name', 'refresh-cw']);
 ok(iconCands.indexOf('settings') >= 0, '保留合法图标名');
@@ -1696,6 +1767,9 @@ try {
 function itemIds(items) {
   return (items || []).map((it) => QP.itemKey(it));
 }
+
+// 依赖 makeHost / CountingVaultAdapter，放在它们定义之后执行
+await testMoveRefreshesInPlace();
 
 /* ============ 结果 ============ */
 

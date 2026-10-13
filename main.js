@@ -617,12 +617,11 @@ class QuickPanelModal extends Modal {
     this.statusEl = null;
   }
 
-  onOpen() {
-    this.modalEl.addClass('quick-panel');
-    // 弹窗/多窗口场景下，面板所在的 window 未必是主窗口 —— 视口尺寸与鼠标坐标都要取它自己的
-    this.setView(this.modalEl.ownerDocument || document);
-
-    // 解析命令表只发生在「面板打开」这一刻（启动零扫描）
+  /**
+   * 从当前配置算出面板要显示的数据：格子条目（含失效状态）+ 最近用过。
+   * `onOpen` 与 `rebuild` 都调它 —— 两边共用一份口径，避免"改了配置界面不变"。
+   */
+  computeState() {
     const registry = this.host.commandRegistry();
     const missing = findMissingItems(this.config.items, {
       findCommand: (id) => this.commandFor(id) || registry.find(id),
@@ -663,6 +662,14 @@ class QuickPanelModal extends Modal {
         self.recent.push(entry);
       });
     }
+  }
+
+  onOpen() {
+    this.modalEl.addClass('quick-panel');
+    // 弹窗/多窗口场景下，面板所在的 window 未必是主窗口 —— 视口尺寸与鼠标坐标都要取它自己的
+    this.setView(this.modalEl.ownerDocument || document);
+
+    this.computeState();
 
     this.buildHeader();
     if (this.config.panel.showSearch) this.buildSearch();
@@ -681,21 +688,87 @@ class QuickPanelModal extends Modal {
       if (this.modalEl && this.modalEl.isConnected) this.modalEl.focus();
     }, 0);
     if (this.opts.autoHighlightFirst !== false) this.setHighlight(0);
+    // 订阅"配置已改"：**任何**写入（改名/换图标/移动/删除/设置）都在面板里就地生效，
+    // 不用逐个操作接线、更不用"关掉面板再打开"（用户 2026-10-14：移动后要重开才生效）
+    this._offConfig = this.host.onConfigChanged(() => this.rebuild());
   }
 
   /**
-   * 就地重建面板内容（设置改动后调用）。
+   * 从当前配置算出面板要显示的数据：格子条目（含失效状态）+ 最近用过。
+   *
+   * ⚠️ 必须与 DOM 重建一起调用：只重建骨架不重算 `this.items`，界面就还是旧顺序
+   *   —— 这正是"右键移动后要关闭面板再打开才生效"的原因（移动只换了配置，条目列表没更新）。
+   */
+  computeState() {
+    const registry = this.host.commandRegistry();
+    const missing = findMissingItems(this.config.items, {
+      findCommand: (id) => this.commandFor(id) || registry.find(id),
+      getAbstractFileByPath: (p) => this.app.vault.getAbstractFileByPath(p),
+      isFolder: (f) => !!f && f.children !== undefined,
+    });
+    this.missing = missing;
+    const missingKey = Object.create(null);
+    missing.forEach(function (m) {
+      missingKey[m.key] = m.kind;
+    });
+    this.items = this.config.items.map(function (it) {
+      const type = itemType(it);
+      const base = { item: it, type: type, missing: '' };
+      if (type === 'command') base.missing = missingKey[asString(it.id).trim()] || '';
+      else base.missing = missingKey[normalizeVaultPath(asString(it.path).trim())] || '';
+      return base;
+    });
+
+    this.recent = [];
+    if (this.config.panel.showRecent && Array.isArray(this.config.recent)) {
+      const self = this;
+      this.config.recent.forEach(function (r) {
+        const rk = itemKey(r);
+        if (!rk) return;
+        // 全部显示（用户 2026-10-14 反馈："最近用过始终是空的" —— 原因是我原先只列"不在面板里"的项，
+        // 而他常用的命令都在面板上）。面板里已有的项直接复用那份条目，图标/名字与面板一致。
+        const inPanel = self.items.filter(function (v) { return itemKey(v.item) === rk; })[0];
+        const entry = inPanel
+          ? { item: inPanel.item, type: inPanel.type, missing: inPanel.missing }
+          : { item: r, type: r.type, missing: '' };
+        // 面板里已有的项其 missing 状态已算过；这里只补"不在面板里"的那些
+        if (!inPanel && r.type === 'command' && !registry.find(asString(r.id).trim())) entry.missing = 'command';
+        if (!inPanel && r.type !== 'command') {
+          const f = self.app.vault.getAbstractFileByPath(normalizeVaultPath(asString(r.path).trim()));
+          if (!f) entry.missing = 'file-missing';
+        }
+        self.recent.push(entry);
+      });
+    }
+  }
+
+  /**
+   * 就地重建面板内容。
    * ⚠️ 必须先清空内容区：Obsidian 的弹窗共用 DOM 容器，只追加会叠出多份头部 —— 那正是
    *   "每次改设置就多一层"的根源。这里复用同一个实例，不再 open 新弹窗。
+   * ⚠️ 还要重算 `computeState()`：只重建 DOM 骨架而不重算 `this.items`，**顺序改了界面也不变**
+   *   —— 那正是"右键移动后要关闭面板再打开才生效"的原因。
    */
   rebuild() {
     try {
+      // 始终以 host 的配置为准（配置的唯一真相），避免读到过期的 this.config
+      if (this.host && this.host.config) this.config = this.host.config;
+      this.computeState();
       this.contentEl.empty();
       this.cellNodes = [];
       this.recentEl = null;
       this.gridEl = null;
       this.statusEl = null;
       this.searchEl = null;
+      // 失效项要按最新配置重新判定
+      const registry = this.host.commandRegistry();
+      const self = this;
+      const missing = findMissingItems(this.config.items, {
+        findCommand: (id) => self.commandFor(id) || registry.find(id),
+        getAbstractFileByPath: (p) => self.app.vault.getAbstractFileByPath(p),
+        isFolder: (f) => !!f && f.children !== undefined,
+      });
+      this.missing = missing;
       this.buildHeader();
       if (this.config.panel.showSearch) this.buildSearch();
       this.buildGrid();
@@ -735,6 +808,16 @@ class QuickPanelModal extends Modal {
     this.items = [];
     this.recent = [];
     if (this.contentEl && this.contentEl.children) this.contentEl.children.length = 0;
+    // 退订配置变更（否则面板关掉后监听还在，重建会作用到已销毁的 DOM）
+    if (typeof this._offConfig === 'function') {
+      try {
+        this._offConfig();
+      } catch (e) {
+        /* 忽略 */
+      }
+      this._offConfig = null;
+    }
+    if (this.host && this.host.modal === this) this.host.modal = null;
   }
 
   /* ---- 结构 ---- */
@@ -889,6 +972,18 @@ class QuickPanelModal extends Modal {
     return this.config.items.findIndex(function (it) {
       return itemKey(it) === key;
     });
+  }
+
+  /**
+   * 移动一条并**立刻就地刷新**。
+   * 现在 `moveItem` 写盘后会 notifyConfigChanged，面板的订阅会自动 rebuild —— 这里保留一次显式
+   * rebuild 作为兜底（万一订阅尚未建立），重复重建是幂等的、不会叠 DOM。
+   */
+  applyMove(item, to) {
+    const ok = this.host.moveItem(item, to);
+    this.config = this.host.config;
+    this.rebuild();
+    return ok;
   }
 
   /**
@@ -1235,14 +1330,14 @@ class QuickPanelModal extends Modal {
         .setTitle('左移')
         .setIcon('arrow-left')
         .setDisabled(index <= 0)
-        .onClick(() => this.host.moveItem(item, index - 1))
+        .onClick(() => this.applyMove(item, index - 1))
     );
     menu.addItem((i) =>
       i
         .setTitle('右移')
         .setIcon('arrow-right')
         .setDisabled(index < 0 || index >= this.config.items.length - 1)
-        .onClick(() => this.host.moveItem(item, index + 2))
+        .onClick(() => this.applyMove(item, index + 2))
     );
     menu.addItem((i) =>
       i
@@ -2026,6 +2121,9 @@ class QuickPanelPlugin extends Plugin {
 
   async savePanelConfig(config) {
     this.config = config;
+    // 同步通知（写盘前）：所有增删改最终都走这里，面板订阅它就地刷新。
+    // 写盘是异步的，放在 await 之后会让"移动后面板顺序"慢一拍甚至丢事件。
+    this.notifyConfigChanged();
     try {
       await this.writePanelConfig(config);
     } catch (e) {
