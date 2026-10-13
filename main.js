@@ -1239,6 +1239,7 @@ class QuickPanelModal extends Modal {
                 onClick: function () {
                   self.host.removeItem(item);
                   new Notice('已从面板移除：' + self.displayName(item));
+                  self.host.reopen(); // 删除后立刻重开面板 → 图标当场消失（不再需要手动关闭再打开）
                 },
               },
             ]
@@ -2141,29 +2142,20 @@ class QuickPanelPlugin extends Plugin {
 
   /* ---- 面板内即时添加 ---- */
 
-  /** 打开"添加"选择器：命令 + 库内文件 + 文件夹；选中即写入并重绘（面板不关） */
+  /** 打开"添加"选择器：命令 + 库内文件 + 文件夹；选中即写入，然后**关闭面板再重开** */
   openPicker(modal, insertAt) {
-    const name = modal ? modal.query : '';
-    const modalRef = modal;
     const self = this;
     const picker = new QuickPanelPickerModal(this.app, {
       commands: this.commandRegistry().all,
       files: this.app.vault.getFiles(),
-      query: name,
+      query: modal ? modal.query : '',
       onChoose: function (entry) {
         const ok = self.addItem(entry, insertAt);
         if (ok) {
           new Notice('已添加：' + (cleanLabel(entry.label) || itemKey(entry)));
-          if (modalRef) {
-            modalRef.config = self.config;
-            try {
-              modalRef.onOpen();
-            } catch (e) {
-              self.reopen();
-            }
-          } else {
-            self.reopen();
-          }
+          // 统一用"关闭再重开面板"来刷新：图标、失效状态、最近用过会一起更新
+          // （在旧实例上重新 onOpen 会叠加头部 DOM，这是之前"面板变两行"的同类问题）
+          self.reopen();
         }
       },
     });

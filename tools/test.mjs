@@ -1291,6 +1291,14 @@ try {
     }
     eq(threw, null, '两边都查不到时 runCommand 不抛异常（而不是静默崩掉）');
   }
+
+  /* 删除/添加之后必须立刻刷新面板（用户 2026-10-14 反馈：删了要手动关了再开才消失） */
+  {
+    ok(/removeItem\(item\)[\s\S]{0,260}reopen\(\)/.test(SOURCE), '删除动作里 removeItem 之后紧接着调用 reopen（面板当场刷新）');
+    ok(/self\.addItem\(entry, insertAt\)[\s\S]{0,360}self\.reopen\(\)/.test(SOURCE), '选择器添加之后也走 reopen（统一刷新口径）');
+    ok(!/modalRef\.onOpen\(\)/.test(SOURCE), '不再在旧面板实例上重新 onOpen（那会叠加头部 DOM，就是"变两行"那类问题）');
+    ok(!/\brefreshPanel\b/.test(SOURCE), '没有留下未接线的 refreshPanel 半成品');
+  }
 } catch (err) {
   ok(false, '点击链路用例抛异常：' + (err && err.message));
 }
