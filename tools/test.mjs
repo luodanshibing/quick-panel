@@ -569,12 +569,10 @@ ok((code.match(/listCommands\(/g) || []).length === 1, '全文件只有一处 li
 ok(code.indexOf('listCommands(') > code.indexOf('async onload()') + onloadBody.length - 1, 'listCommands 不在 onload 内（面板打开时才解析）');
 ok(/class QuickPanelModal extends Modal/.test(code), '面板是一个 Modal（可停在鼠标位置）');
 ok(/this\.setView\(this\.modalEl\.ownerDocument \|\| document\)/.test(code), '面板打开时按"它所在的窗口"绑定视图（弹窗不会串坐标）');
-ok(/ensureMouseTracking/.test(code) && /registerDomEvent\(\s*d,\s*'mousemove'/.test(code), '鼠标只记两个数字，且用 registerDomEvent 注册（停用即注销）');
-ok(code.indexOf("getWindow()") > 0 && /ownerDocument\.defaultView/.test(code), '窗口统一由 ownerDocument.defaultView 取（主窗口/弹窗都对）');
-// 全局级 addEventListener 只允许两类：拖拽时临时挂的（配对 remove）、以及注释里说明的窗口判定
-const globalAdds = (code.match(/\bw\.addEventListener\(/g) || []).length;
-const globalRemoves = (code.match(/\bw\.removeEventListener\(/g) || []).length;
-ok(globalAdds > 0 && globalAdds === globalRemoves, '窗口级监听只有拖拽那一对临时挂载（挂几次就摘几次）');
+ok(/ownerDocument\.defaultView/.test(code) && /getWindow\(\)/.test(code), '窗口统一由 ownerDocument.defaultView 取（主窗口/弹窗都对）');
+ok(!/__quickPanelMouse|mousemove|dragX/.test(code), '居中布局后不再需要鼠标跟踪与拖拽（相关代码已全部移除）');
+// 居中布局不需要任何全局级监听（拖拽功能已随"改居中"移除）
+ok(!/\bw\.addEventListener\(/.test(code), '不再有任何窗口级常驻监听（居中不需要）');
 ok(!/\bdocument\.addEventListener\(/.test(code), '不绕过 registerDomEvent 直接挂 document 监听（卸载才干净）');
 ok(!/window\.addEventListener\(/.test(code), '不直接挂 window 监听');
 ok(/gridColumns\(/.test(code), '列数由 gridColumns 纯函数决定，不写死在 CSS');
@@ -605,7 +603,6 @@ ok(/\.qp-cell[\s\S]{0,400}box-shadow: none/.test(STYLES), '格子按钮强制清
 const fakeHost = {
   commandRegistry: () => ({ find: () => undefined, findByName: () => undefined }),
 };
-const CELL_GAP_FOR_TEST = 8; // 与 main.js 的 CELL_GAP 保持一致（改那边记得改这里）
 const proto = QP.QuickPanelModal.prototype;
 const ctx = { host: fakeHost, app: { vault: {} } };
 eq(proto.displayName.call(ctx, { type: 'command', id: 'app:reload', label: '重载' }), '重载', 'displayName 优先用 label');
@@ -788,13 +785,11 @@ try {
   eq(nav2.highlight, 20, '目标行没有这一列就不动（20 已在最后一行，按下仍是 20）');
 
   /*
-   * 定位（回归：第一次真机实测"整屏变暗但看不到面板、角上留一块白条"）
-   * 卡片尺寸固定为 800x600，视口 1200x800，EDGE_GAP=12。
-   * 期望：右下角钳到 (1200-800-12, 800-600-12) = (388, 188)，四边都不出视口。
+   * 定位（用户 2026-10-13 裁定改为"窗口居中"）
+   * 卡片 800x600 / 视口 1200x800 → 居中位置 (200, 100)，卡片比视口大时可能为负，但公式必须恒定。
    */
-  const EDGE = 12;
-  function placeWith(mouse, cardW, cardH, vw = 1200, vh = 800) {
-    const holder = new QP.QuickPanelModal(fakeApp, host, QP.normalizePanelConfig({ items: [], recent: [] }), { mouse: mouse });
+  function placeWith(cardW, cardH, vw = 1200, vh = 800) {
+    const holder = new QP.QuickPanelModal(fakeApp, host, QP.normalizePanelConfig({ items: [], recent: [] }), {});
     const el = new FakeElement('div');
     el.addClass('quick-panel');
     el.addClass('modal');
@@ -804,20 +799,22 @@ try {
     window.innerHeight = vh;
     holder.placeAtMouse();
     const m = /translate\((-?\d+)px, (-?\d+)px\)/.exec(el.style.transform || '');
-    return m ? { x: Number(m[1]), y: Number(m[2]), left: el.style.left, top: el.style.top } : { x: NaN, y: NaN };
+    return m ? { x: Number(m[1]), y: Number(m[2]), left: el.style.left, top: el.style.top } : { x: NaN, y: NaN, left: el.style.left, top: el.style.top };
   }
-  const far = placeWith({ x: 1195, y: 790 }, 800, 600);
-  eq(far.x, 1200 - 800 - EDGE, '鼠标贴右下角时，面板左边钳到视口内（不出右边界）');
-  eq(far.y, 800 - 600 - EDGE, '鼠标贴右下角时，面板上边钳到视口内（**底边不再溢出**，这正是白条的成因）');
-  eq(far.x + 800 <= 1200 - EDGE, true, '钳位后整块面板都在视口右边界内');
-  eq(far.y + 600 <= 800 - EDGE, true, '钳位后整块面板都在视口下边界内');
-  const near = placeWith({ x: 200, y: 150 }, 800, 600);
-  eq(near.x, 200 + CELL_GAP_FOR_TEST, '鼠标在中间时，面板出现在鼠标右下方一点');
-  eq(near.y, 150 + CELL_GAP_FOR_TEST, '纵坐标同理');
-  eq(near.left, '0px', '定位偏移只用 transform，left/top 固定为 0（量到的宽度才是真宽度）');
-  eq(near.top, '0px', 'top 同理');
-  const tinyViewport = placeWith({ x: 300, y: 300 }, 900, 700, 800, 600);
-  ok(tinyViewport.x >= EDGE && tinyViewport.y >= EDGE, '面板比视口还大时也至少保证左上角在视口内（不出现负坐标把标题挤出去）');
+  const centered = placeWith(800, 600);
+  eq(centered.x, (1200 - 800) / 2, '窗口居中：x = (视口宽 − 卡片宽) ÷ 2');
+  eq(centered.y, (800 - 600) / 2, '窗口居中：y = (视口高 − 卡片高) ÷ 2');
+  eq(centered.left, '0px', '位置只用 transform（left 固定 0）');
+  eq(centered.top, '0px', 'top 同理');
+  const centered2 = placeWith(500, 300, 1000, 700);
+  eq(centered2.x, 250, '换一个视口/卡片尺寸仍然居中（1000-500)/2）');
+  eq(centered2.y, 200, '纵坐标同理（(700-300)/2）');
+  const small = placeWith(120, 80, 4000, 2000);
+  eq(small.x, 1940, '超宽视口下仍居中');
+  eq(small.y, 960, '超高视口下仍居中');
+  // 与鼠标无关：连鼠标坐标都不需要传（构造器已不接收 mouse）
+  const holderNoMouse = new QP.QuickPanelModal(fakeApp, host, QP.normalizePanelConfig({ items: [], recent: [] }), {});
+  ok(holderNoMouse.mouse === undefined, '面板不再持有鼠标坐标（居中不依赖鼠标）');
 } catch (e) {
   ok(false, '面板渲染冒烟抛异常：' + (e && e.stack ? e.stack.split('\n').slice(0, 3).join(' | ') : e));
 }

@@ -2,11 +2,11 @@
 
 An icon grid that one hotkey away — pin the commands and notes you actually use onto a panel that appears where your mouse is, so you don't have to memorise hotkeys or type search queries.
 
-> Status: **v0.1.3 — batch 1 of 3 (panel + execute + icons)**. Working today: the panel, keyboard/mouse execution, icons from three sources, live config file, broken-item detection. Coming next: add-a-tile from inside the panel, tile context menu, file/folder tiles, import/export. See *Roadmap* below.
+> Status: **v0.1.4 — batch 1 of 3 (panel + execute + icons)**. Working today: the panel, keyboard/mouse execution, icons from three sources, live config file, broken-item detection. Coming next: add-a-tile from inside the panel, tile context menu, file/folder tiles, import/export. See *Roadmap* below.
 >
-> **v0.1.3** renamed the panel to **快捷面板** (the earlier build wrote 快接面板). Your config file is **renamed automatically on first load** — the old `快接面板.json` is copied to `快捷面板.json` and then removed, content untouched. The config file name is the only thing that changed.
+> **v0.1.4 — the panel is now simply centered.** Following the mouse turned out to be the source of "wrong place, different place every time", so per the owner's call the panel opens **centered in the window**; drag-to-move and all mouse tracking were removed with it. The position is still computed from the *measured* card rect, so it is exact and stable.
 >
-> **v0.1.2 fixed "the panel opens in the wrong place, a different place every time"**: the mouse was tracked globally rather than per window, so the coordinates could be stale; `placeAtMouse` also clamped with an *estimated* card size. Now the mouse is tracked per window (`ownerDocument.defaultView`, so popout windows work too), frame-one entrance animation is disabled for the panel, and the position is computed once from the *measured* rect — if the card has not been laid out yet it is not positioned at all and is re-measured on the next frame.
+> **v0.1.3** renamed the panel to **快捷面板** (the earlier build wrote 快接面板). Your config file is **renamed automatically on first load** — the old `快接面板.json` is copied to `快捷面板.json` and then removed, content untouched.
 >
 > **v0.1.1 fixed a display bug found on first run**: the modal container lost its viewport size (the whole screen dimmed while the panel was pushed off-screen, leaving a white sliver in the corner), and the card's `top` clamp let it overflow the bottom edge. If the panel still looks wrong, run the command **导出面板诊断（排查显示问题用）** — it writes the real geometry to `.quick-panel-diag.txt` in the vault root.
 
@@ -18,7 +18,7 @@ If you have ever used the "quick access panel" in SolidWorks, this is the same h
 
 ## Features (v0.1.1)
 
-- **Icon grid panel**, opened by a command or the ribbon icon, positioned at your mouse pointer and draggable by its header.
+- **Icon grid panel**, opened by a command or the ribbon icon, **centered in the window**.
 - **Columns adapt to the window width** (2–12), computed by a pure function, never hard-coded.
 - **Three icon sources per tile**: a Lucide icon name, an emoji, or an in-vault image (`logo.png`). Unrecognised values fall back to a default icon *and* say why in the tooltip.
 - **Tiles are Obsidian commands, files, or folders** — the panel is only a launcher; it never edits your notes.
@@ -119,11 +119,11 @@ MIT — see [LICENSE](LICENSE).
 
 一个快捷键呼出的**图标网格面板**：把你真正在用的命令、笔记、文件夹钉在眼前，不用记快捷键，也不用打字搜索。
 
-> 状态：**v0.1.3 —— 三批里的第 1 批（面板 + 执行 + 图标）**。现在能用的：面板本体、键盘/鼠标执行、三种图标来源、库内配置文件实时生效、失效项检测。下一批：面板内即时添加、格子右键菜单；再下一批：文件/文件夹项打磨与导入导出。
+> 状态：**v0.1.4 —— 三批里的第 1 批（面板 + 执行 + 图标）**。现在能用的：面板本体、键盘/鼠标执行、三种图标来源、库内配置文件实时生效、失效项检测。下一批：面板内即时添加、格子右键菜单；再下一批：文件/文件夹项打磨与导入导出。
+>
+> **v0.1.4 —— 面板改为直接居中。** "跟随鼠标"正是"位置不对、每次还不一样"的来源，按你的裁定改成**在窗口正中显示**；拖拽移动与整套鼠标跟踪一并删掉。位置仍按**实测的卡片尺寸**计算，所以是精确且稳定的。
 >
 > **v0.1.3** 把面板名改成 **快捷面板**（早先那版写成了「快接面板」）。你的配置文件**首次加载时会自动改名**：旧的 `快接面板.json` 原样复制成 `快捷面板.json` 后删除，内容一字不改。
->
-> **v0.1.2 修的是"面板位置不对、每次还不一样"**：鼠标坐标原先只有一个全局记录（可能是陈旧的），`placeAtMouse` 又用**估算**的卡片尺寸钳位。现在按窗口记录鼠标（走 `ownerDocument.defaultView`，弹窗也对）、关掉面板入场动画，并且只用**实测 rect** 算位置 —— 量不到尺寸的那一帧干脆不定位，下一帧重量。
 >
 > **v0.1.1 修的是第一次实测暴露的显示 bug**：容器丢掉视口尺寸（结果整屏变暗、面板被挤出屏幕、只在角上留一块白条），以及卡片靠 `top` 钳位导致底边溢出。若显示仍不对，跑命令 **导出面板诊断（排查显示问题用）**，它会把真实几何写进库根 `.quick-panel-diag.txt`。
 
@@ -135,7 +135,7 @@ MIT — see [LICENSE](LICENSE).
 
 ## 现在具备的（v0.1.1）
 
-- **图标网格面板**：命令或 ribbon 图标呼出，**出现在鼠标位置**，拖头部可移动。
+- **图标网格面板**：命令或 ribbon 图标呼出，**在窗口正中显示**。
 - **列数随窗口自适应**（2–12 列），由纯函数算，不写死在 CSS 里。
 - **每个格子三种图标来源**：Lucide 名、emoji、库内图片（`logo.png`）；认不出的写法会退回默认图标**并在悬停提示里说明原因**。
 - **格子指向 Obsidian 命令 / 笔记 / 文件夹**：面板只负责"启动"，从不改动你的笔记。

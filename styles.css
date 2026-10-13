@@ -10,16 +10,16 @@
  * 本面板要停在鼠标位置，所以持有 .quick-panel 的那个容器改成固定定位（其它弹窗不受影响）。
  */
 
-/* ---------- 面板容器：停在鼠标位置 ---------- */
+/* ---------- 面板容器：窗口居中 ---------- */
 
 /*
- * 面板持有两个 class：modal-container 与 quick-panel。
+ * 面板持有两个 class：modal-container 与 quick-panel。位置由 main.js 用 translate 写成"窗口正中"。
  *
  * 两次实测的教训（都发生在这一对规则上）：
  *   1) 只写 position/left/top 就去掉居中 → 容器退化成"贴合内容的小盒子"：整屏变暗、卡片跑到右下角。
  *      → 容器必须自己给满屏尺寸（inset:0 + 100%/100%）。
  *   2) 给卡片设 min-height 又靠 top 钳位 → 卡片比预算高，底边露在屏幕外（右下角一块白条）。
- *      → 位置由 left/top + translate 一起钳（见 main.js placeAtMouse），卡片本身 fit-content。
+ *      → 位置一律用 translate 给，且用实测 rect 算（居中时不需要钳位，卡片不会比视口大）。
  */
 .modal-container.quick-panel {
   position: fixed;
@@ -35,12 +35,6 @@
   opacity: 1;
   pointer-events: auto;
   overflow: hidden;
-}
-
-/* 左键拖拽头部时不要选中文字、不要出现文本光标 */
-body.qp-dragging {
-  cursor: grabbing;
-  user-select: none;
 }
 
 /* ---------- 面板卡片 ---------- */
@@ -110,11 +104,6 @@ body.qp-dragging {
   gap: 8px;
   padding: 2px 2px 10px;
   border-bottom: 1px solid var(--background-modifier-border);
-  cursor: grab;
-}
-
-.qp-header:active {
-  cursor: grabbing;
 }
 
 .qp-title {
