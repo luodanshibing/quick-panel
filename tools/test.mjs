@@ -822,6 +822,58 @@ try {
   ok(false, '面板渲染冒烟抛异常：' + (e && e.stack ? e.stack.split('\n').slice(0, 3).join(' | ') : e));
 }
 
+/* ============ 8. 旧配置名自动迁移（改名不丢格子） ============ */
+
+group('旧配置名自动迁移');
+
+const legacyText = JSON.stringify({
+  version: 1,
+  panel: { columns: 'auto', showRecent: true, iconSize: 40, showSearch: true },
+  items: [{ type: 'command', id: 'app:reload', label: '重载', icon: 'refresh-cw' }],
+  recent: [],
+});
+
+async function runMigration(files) {
+  const store = Object.assign({}, files);
+  const adapter = {
+    exists: async (p) => Object.prototype.hasOwnProperty.call(store, p),
+    read: async (p) => {
+      if (!Object.prototype.hasOwnProperty.call(store, p)) throw new Error('ENOENT ' + p);
+      return store[p];
+    },
+    write: async (p, text) => {
+      store[p] = text;
+    },
+    remove: async (p) => {
+      delete store[p];
+    },
+  };
+  const plugin = Object.create(QP.QuickPanelPlugin.prototype);
+  plugin.app = { vault: { adapter: adapter } };
+  plugin.configPath = QP.CONFIG_NAME;
+  const res = await plugin.readPanelConfig();
+  return { res: res, store: store };
+}
+
+try {
+  const migrated = await runMigration({ '快接面板.json': legacyText });
+  ok(Object.prototype.hasOwnProperty.call(migrated.store, '快捷面板.json'), '旧文件名 → 已写出新文件名');
+  ok(!Object.prototype.hasOwnProperty.call(migrated.store, '快接面板.json'), '旧文件已移除');
+  eq(migrated.store['快捷面板.json'], legacyText, '迁移是原样复制（内容和字节都没改）');
+  eq(migrated.res.config.items.length, 1, '迁移后配置照常解析（格子还在）');
+  eq(migrated.res.config.items[0].label, '重载', '格子的 label 保住了');
+  ok(migrated.res.notice.indexOf('改名') >= 0, '迁移会给用户一条提示（不静默改名）');
+
+  const fresh = await runMigration({});
+  ok(Object.prototype.hasOwnProperty.call(fresh.store, '快捷面板.json'), '两个文件都不存在 → 创建新文件名的默认配置');
+  ok(fresh.res.notice.indexOf('已创建') >= 0, '首次创建也有提示');
+
+  const both = await runMigration({ '快捷面板.json': legacyText, '快接面板.json': legacyText });
+  ok(Object.prototype.hasOwnProperty.call(both.store, '快接面板.json'), '新名已存在时不迁移、也不碰旧文件（不删用户文件）');
+} catch (e) {
+  ok(false, '迁移用例抛异常：' + (e && e.message));
+}
+
 /* ============ 结果 ============ */
 
 console.log('\n通过 ' + pass + ' 项，失败 ' + fail + ' 项');
