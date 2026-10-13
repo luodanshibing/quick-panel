@@ -21,6 +21,7 @@ const {
   Modal,
   Notice,
   Menu,
+  SuggestModal,
   setIcon,
   getIconIds,
 } = require('obsidian');
@@ -466,6 +467,92 @@ function filterItems(items, query) {
   });
 }
 
+/**
+ * 把"选择器选中项"整理成可写入配置的新格子；不合格返回 null（不抛异常）。
+ * 命令名统一去掉观测到的"插件名: "前缀（面板里显示已经带图标，那个前缀只占宽度）。
+ */
+function sanitizeNewItem(entry) {
+  if (!isPlainObject(entry)) return null;
+  const type = itemType(entry);
+  if (!type) return null;
+  const out = { type: type };
+  if (type === 'command') {
+    const id = asString(entry.id).trim();
+    if (!id) return null;
+    out.id = id;
+    const snapshot = cleanLabel(entry.nameSnapshot) || cleanLabel(entry.name);
+    if (snapshot) out.nameSnapshot = snapshot;
+  } else {
+    const path = normalizeVaultPath(asString(entry.path)).trim();
+    if (!path) return null;
+    out.path = path;
+  }
+  const label = cleanLabel(entry.displayLabel || entry.label);
+  if (label) out.label = label;
+  if (typeof entry.icon === 'string' && entry.icon) out.icon = entry.icon;
+  return out;
+}
+
+/** 把插件给命令自动加的前缀去掉："QuickAdd: 快速捕捉" → "快速捕捉" */
+function stripCommandPrefix(name) {
+  const full = cleanLabel(name);
+  const i = full.indexOf(':');
+  if (i <= 0) return full;
+  const head = full.slice(0, i);
+  if (/[\u4e00-\u9fa5]/.test(head)) return full; // 中文名里出现冒号多半是名称本身
+  return full.slice(i + 1).trim() || full;
+}
+
+/**
+ * 选择器的候选数据源：库内命令（用未过滤的完整表）+ 库内文件 + 文件夹。
+ * 纯函数，便于离线断言。
+ */
+function buildPickerItems(input) {
+  const src = isPlainObject(input) ? input : {};
+  const out = [];
+  const commands = Array.isArray(src.commands) ? src.commands : [];
+  commands.forEach(function (c) {
+    if (!c || !c.id) return;
+    const name = cleanLabel(c.name);
+    out.push({
+      kind: 'command',
+      id: c.id,
+      label: stripCommandPrefix(name),
+      savedLabel: name,
+      name: name,
+      icon: asString(c.icon),
+    });
+  });
+  const files = Array.isArray(src.files) ? src.files : [];
+  files.forEach(function (f) {
+    if (!f || !f.path || f.children) return; // 有 children 的是文件夹
+    const base = String(f.path).split('/').pop() || String(f.path);
+    out.push({ kind: 'file', path: normalizeVaultPath(f.path), label: base.replace(/\.md$/i, ''), name: base });
+  });
+  files.forEach(function (f) {
+    if (!f || !f.path || !f.children) return;
+    out.push({ kind: 'folder', path: normalizeVaultPath(f.path), label: String(f.path).split('/').pop() || String(f.path) });
+  });
+  return out;
+}
+
+/** 候选过滤：前缀命中排前、子串命中排后；空查询返回前 N 条 */
+function filterPickerItems(items, query, limit) {
+  const list = Array.isArray(items) ? items : [];
+  const max = Number.isInteger(limit) && limit > 0 ? limit : 400;
+  const q = asString(query).trim().toLowerCase();
+  if (!q) return list.slice(0, max);
+  const starts = [];
+  const contains = [];
+  list.forEach(function (it) {
+    const hay = [it.label, it.name, it.id, it.path].map(asString).join(' ').toLowerCase();
+    if (!hay) return;
+    if (hay.indexOf(q) === 0 || (it.label && String(it.label).toLowerCase().indexOf(q) === 0)) starts.push(it);
+    else if (hay.indexOf(q) > 0) contains.push(it);
+  });
+  return starts.concat(contains).slice(0, max);
+}
+
 /* =====================================================================================
  * 三、库内配置文件的读写（唯一被写的文件）
  * ===================================================================================== */
@@ -567,7 +654,8 @@ class QuickPanelModal extends Modal {
     this.buildHeader();
     if (this.config.panel.showSearch) this.buildSearch();
     this.buildGrid();
-    if (this.config.panel.showRecent && this.recent.length) this.buildRecent();
+    // 「最近用过」固定显示在网格下面一行（用户问"最近命令显示在哪里"，答案就在这儿）
+    if (this.config.panel.showRecent) this.buildRecent();
     this.buildFooter();
 
     this.render();
@@ -617,9 +705,13 @@ class QuickPanelModal extends Modal {
     const title = header.createDiv({ cls: 'qp-title' });
     title.createSpan({ cls: 'qp-title-text', text: '快捷面板' });
 
-    // 用户 2026-10-13 要求："把所有 × 都去掉" → 这里不再放关闭按钮，
-    // 自带的那个也在 CSS 里隐藏了。关闭方式：Esc、点面板外任意处（Obsidian 弹窗标准行为）。
+    // 用户 2026-10-13 要求："把所有 × 都去掉" → 这里只放「+」（面板内即时添加）
+    // 关闭方式：Esc、点面板外（Obsidian 弹窗标准行为）。
     const actions = header.createDiv({ cls: 'qp-actions' });
+    const addBtn = actions.createEl('button', { cls: 'qp-icon-btn', attr: { type: 'button' } });
+    setIcon(addBtn, 'plus');
+    addBtn.setAttribute('aria-label', '添加格子（命令 / 笔记 / 文件夹）');
+    addBtn.addEventListener('click', () => this.host.openPicker(this));
     const menuBtn = actions.createEl('button', { cls: 'qp-icon-btn', attr: { type: 'button' } });
     setIcon(menuBtn, 'more-horizontal');
     menuBtn.setAttribute('aria-label', '更多');
@@ -744,8 +836,20 @@ class QuickPanelModal extends Modal {
     // 触发方式：click 为主，pointerup 兜底（两者都会调用，但 400ms 内同一条只执行一次）
     this.bindActivate(btn, () => this.executeEntry(entry));
     btn.addEventListener('mouseenter', () => this.setHighlight(index));
-    btn.addEventListener('contextmenu', (evt) => this.openItemMenu(evt, entry));
+    btn.addEventListener('contextmenu', (evt) => {
+      evt.preventDefault();
+      const itemIndex = this.indexOfItem(entry.item);
+      this.openItemMenu(evt, entry, itemIndex);
+    });
     return btn;
+  }
+
+  /** 配置数组里的下标（菜单的移动/删除要用） */
+  indexOfItem(item) {
+    const key = itemKey(item);
+    return this.config.items.findIndex(function (it) {
+      return itemKey(it) === key;
+    });
   }
 
   /**
@@ -1046,46 +1150,129 @@ class QuickPanelModal extends Modal {
     this.close();
   }
 
-  /* ---- 菜单（本批只有「更多」；格子右键下一批） ---- */
+  /* ---- 菜单 ---- */
 
-  openItemMenu(evt, entry) {
+  /**
+   * 格子右键菜单：改名 / 换图标 / 移动 / 删除 / 插到这一格后面 / 重新绑定。
+   * 全部操作都只改那一个 JSON（host 负责写盘），改完面板就地重绘、不关闭。
+   */
+  openItemMenu(evt, entry, itemIndex) {
     evt.preventDefault();
+    const index = typeof itemIndex === 'number' ? itemIndex : this.indexOfItem(entry.item);
+    const item = entry.item;
     const menu = new Menu();
+    menu.addItem((i) => i.setTitle('这一格：' + this.displayName(item)).setIcon('info').setDisabled(true));
+    menu.addSeparator();
     menu.addItem((i) =>
-      i.setTitle('这一格：' + this.displayName(entry.item)).setIcon('info').setDisabled(true)
+      i
+        .setTitle('改名…')
+        .setIcon('type')
+        .onClick(() => this.promptRename(item, this.displayName(item)))
+    );
+    menu.addItem((i) =>
+      i
+        .setTitle('换图标…')
+        .setIcon('image')
+        .onClick(() => this.promptIcon(item))
     );
     menu.addSeparator();
     menu.addItem((i) =>
       i
-        .setTitle('打开配置文件（快捷面板.json）')
-        .setIcon('file-text')
-        .onClick(() => this.host.openConfigFile())
+        .setTitle('左移')
+        .setIcon('arrow-left')
+        .setDisabled(index <= 0)
+        .onClick(() => this.host.moveItem(item, index - 1))
     );
     menu.addItem((i) =>
       i
-        .setTitle(entry.missing === 'command' ? '这条命令已失效 —— 重新绑定' : '重新绑定到同名命令')
-        .setIcon('link')
+        .setTitle('右移')
+        .setIcon('arrow-right')
+        .setDisabled(index < 0 || index >= this.config.items.length - 1)
+        .onClick(() => this.host.moveItem(item, index + 2))
+    );
+    menu.addItem((i) =>
+      i
+        .setTitle('插到这一格后面…')
+        .setIcon('plus')
+        .onClick(() => this.host.openPicker(this, index + 1))
+    );
+    menu.addSeparator();
+    menu.addItem((i) =>
+      i
+        .setTitle('删除这一格')
+        .setIcon('trash')
         .onClick(() => {
-          const snapshot = cleanLabel(entry.item.nameSnapshot) || cleanLabel(entry.item.label) || asString(entry.item.id);
-          const guess = this.host.commandRegistry().findByName(snapshot);
-          if (!guess) {
-            new Notice('没找到同名命令，没法自动重新绑定');
-            return;
-          }
-          this.host.rebindCommand(entry.item, guess.id, guess.name);
-          new Notice('已重新绑定：' + guess.name + '（' + guess.id + '）');
-          this.host.reopen();
-          this.silentClose();
+          const self = this;
+          new ConfirmLikeModal(
+            this.app,
+            '删除这一格？',
+            [{ label: this.displayName(item) + '（只从面板移除，不动任何文件）' }],
+            [
+              {
+                label: '删除',
+                onClick: function () {
+                  self.host.removeItem(item);
+                  new Notice('已从面板移除：' + self.displayName(item));
+                },
+              },
+            ]
+          ).open();
         })
     );
+    if (entry.missing === 'command') {
+      menu.addSeparator();
+      menu.addItem((i) =>
+        i
+          .setTitle('这条命令已失效 —— 重新绑定到同名命令')
+          .setIcon('link')
+          .onClick(() => {
+            const snapshot = cleanLabel(item.nameSnapshot) || cleanLabel(item.label) || asString(item.id);
+            const guess = this.host.commandRegistry().findByName(snapshot);
+            if (!guess) {
+              new Notice('没找到同名命令，没法自动重新绑定');
+              return;
+            }
+            this.host.rebindCommand(item, guess.id, guess.name);
+            new Notice('已重新绑定：' + guess.name + '（' + guess.id + '）');
+            this.host.reopen();
+          })
+      );
+    }
     menu.addSeparator();
     menu.addItem((i) =>
-      i
-        .setTitle('编辑/添加格子 —— 下一批做')
-        .setIcon('edit')
-        .setDisabled(true)
+      i.setTitle('打开配置文件（快捷面板.json）').setIcon('file-text').onClick(() => this.host.openConfigFile())
     );
     menu.showAtMouseEvent(evt);
+  }
+
+  /** 改名：一个输入框的小弹窗（用 Promise 简化逻辑，失败则保持原样） */
+  promptRename(item, current) {
+    const self = this;
+    const modal = new ConfirmLikeModal(this.app, '改显示名', [], [
+      {
+        label: '保存',
+        onClick: function () {
+          const value = modal.getInputValue();
+          self.host.updateItem(item, { label: value });
+          new Notice('已改名：' + (cleanLabel(value) || '(空，将显示命令原名)'));
+          self.host.reopen();
+        },
+      },
+    ]);
+    modal.addInput({ value: current, placeholder: '显示名（留空则用命令/文件名）' });
+    modal.open();
+  }
+
+  /** 换图标：填 Lucide 名 / emoji / 库内图片路径；带全量图标名建议 */
+  promptIcon(item) {
+    const self = this;
+    const modal = new IconSuggestModal(this.app, modalIconCandidates(this.host.iconNames()), (value) => {
+      self.host.updateItem(item, { icon: value });
+      new Notice('已改图标：' + value);
+      self.host.reopen();
+    });
+    modal.setPlaceholder('图标名 / emoji / 库内图片路径（如 logo.png）');
+    modal.open();
   }
 
   openMoreMenu(evt) {
@@ -1152,6 +1339,14 @@ class ConfirmLikeModal extends Modal {
       const row = body.createDiv({ cls: 'qp-confirm-line' + (l.muted ? ' is-muted' : '') });
       row.setText(l.label);
     });
+    if (this.inputSpec) {
+      const wrap = this.contentEl.createDiv({ cls: 'qp-confirm-input' });
+      this.inputEl = wrap.createEl('input', {
+        cls: 'qp-search-input',
+        attr: { type: 'text', placeholder: this.inputSpec.placeholder || '', value: this.inputSpec.value || '' },
+      });
+      this.inputEl.value = this.inputSpec.value || '';
+    }
     const foot = this.contentEl.createDiv({ cls: 'qp-confirm-actions' });
     this.actions.forEach((a) => {
       const btn = foot.createEl('button', { cls: 'qp-btn', attr: { type: 'button' } });
@@ -1166,12 +1361,206 @@ class ConfirmLikeModal extends Modal {
     cancel.addEventListener('click', () => this.close());
   }
 
+  /** 给确认窗加一个输入框（改名用） */
+  addInput(spec) {
+    this.inputSpec = spec || {};
+    return this;
+  }
+
+  getInputValue() {
+    return this.inputEl ? String(this.inputEl.value || '') : '';
+  }
+
   onClose() {
     this.contentEl.empty();
   }
 }
 
+/**
+ * 图标建议弹窗：一个输入框 + 实时过滤的建议列表。
+ * 候选来自运行期 `getIconIds()`（本机实测是顶层导出），拿不到时退化成内置清单。
+ */
+class IconSuggestModal extends SuggestModal {
+  constructor(app, candidates, onChoose) {
+    super(app);
+    this.candidates = Array.isArray(candidates) ? candidates : [];
+    this.onChoose = onChoose;
+    this.limit(30);
+  }
+
+  getSuggestions(query) {
+    const q = asString(query).trim().toLowerCase();
+    const list = this.candidates;
+    if (!q) return list.slice(0, 30);
+    const starts = [];
+    const contains = [];
+    list.forEach(function (name) {
+      const lower = name.toLowerCase();
+      if (lower.indexOf(q) === 0) starts.push(name);
+      else if (lower.indexOf(q) > 0) contains.push(name);
+    });
+    return starts.concat(contains).slice(0, 30);
+  }
+
+  renderSuggestion(name, el) {
+    el.addClass('qp-suggest-item');
+    const box = el.createDiv({ cls: 'qp-icon qp-suggest-icon' });
+    try {
+      setIcon(box, name);
+    } catch (e) {
+      /* 名字不合法就不画图标，只留文字 */
+    }
+    el.createSpan({ cls: 'qp-suggest-label', text: name });
+  }
+
+  onChooseSuggestion(name) {
+    if (typeof this.onChoose === 'function') this.onChoose(asString(name));
+  }
+}
+
+/** 图标候选：过滤掉 emoji 之类不能作为图标名的项，并去重排序 */
+function modalIconCandidates(runtimeNames) {
+  const seen = Object.create(null);
+  const out = [];
+  const push = (v) => {
+    const name = asString(v).trim();
+    if (!name || seen[name]) return;
+    if (!/^[a-z0-9][a-z0-9-]*$/i.test(name)) return;
+    seen[name] = 1;
+    out.push(name);
+  };
+  if (Array.isArray(runtimeNames)) runtimeNames.forEach(push);
+  LUCIDE_CANDIDATES.forEach(push);
+  return out.sort();
+}
+
 const DEFAULT_ICON = 'circle-dot';
+
+/**
+ * 「添加格子」选择器：命令 + 库内文件 + 文件夹，可打字过滤，方向键选择，Enter 加入。
+ * 自绘列表（InputSuggest 在部分版本里对"回车选中"的处理不一致，这里走自己的输入框 + 列表）。
+ * 选中即回调 → 写入 JSON → 面板就地重绘（面板不关，这就是"顺手就加"的核心体验）。
+ */
+class QuickPanelPickerModal extends Modal {
+  constructor(app, opts) {
+    super(app);
+    this.opts = opts || {};
+    this.all = buildPickerItems({
+      commands: this.opts.commands,
+      files: this.opts.files,
+    });
+    this.query = asString(this.opts.query);
+    this.items = [];
+    this.highlight = 0;
+    this.inputEl = null;
+    this.listEl = null;
+  }
+
+  onOpen() {
+    this.modalEl.addClass('quick-panel');
+    this.modalEl.addClass('qp-picker');
+    this.contentEl.addClass('quick-panel');
+    this.titleEl.setText('添加格子');
+    const wrap = this.contentEl.createDiv({ cls: 'qp-picker-search' });
+    this.inputEl = wrap.createEl('input', {
+      cls: 'qp-search-input',
+      attr: { type: 'text', placeholder: '打字过滤：命令 / 笔记 / 文件夹' },
+    });
+    this.inputEl.value = this.query;
+    this.listEl = this.contentEl.createDiv({ cls: 'qp-picker-list' });
+    this.inputEl.addEventListener('input', () => {
+      this.query = this.inputEl.value;
+      this.renderList();
+    });
+    this.inputEl.addEventListener('keydown', (evt) => {
+      if (evt.key === 'ArrowDown' || evt.key === 'ArrowUp') {
+        this.moveHighlight(evt.key === 'ArrowDown' ? 1 : -1);
+        evt.preventDefault();
+      } else if (evt.key === 'Enter') {
+        const it = this.items[this.highlight];
+        if (it) this.choose(it);
+        evt.preventDefault();
+      }
+    });
+    const win = (this.modalEl.ownerDocument && this.modalEl.ownerDocument.defaultView) || window;
+    win.setTimeout(() => {
+      if (this.inputEl && this.inputEl.focus) this.inputEl.focus();
+    }, 0);
+    this.renderList();
+  }
+
+  onClose() {
+    this.contentEl.empty();
+  }
+
+  renderList() {
+    this.items = filterPickerItems(this.all, this.query, 400);
+    if (this.highlight >= this.items.length) this.highlight = 0;
+    this.listEl.empty();
+    if (!this.items.length) {
+      this.listEl.createDiv({ cls: 'qp-empty', text: '没有匹配项' });
+      return;
+    }
+    const self = this;
+    this.items.forEach(function (it, idx) {
+      const row = self.listEl.createDiv({ cls: 'qp-picker-item' });
+      const box = row.createDiv({ cls: 'qp-icon qp-picker-icon' });
+      const iconName = it.icon ? stripLucidePrefix(it.icon) : it.kind === 'file' || it.kind === 'folder' ? 'file-text' : DEFAULT_ICON;
+      try {
+        setIcon(box, iconName);
+      } catch (e) {
+        /* 图标名不合法就留空 */
+      }
+      const text = row.createDiv({ cls: 'qp-picker-text' });
+      text.createSpan({ cls: 'qp-picker-label', text: it.label || it.id || it.path });
+      const sub = it.kind === 'command' ? it.id : it.path;
+      if (sub) text.createSpan({ cls: 'qp-picker-sub', text: sub });
+      if (idx === self.highlight) row.addClass('is-active');
+      row.addEventListener('mouseenter', () => {
+        self.highlight = idx;
+        self.paintHighlight();
+      });
+      row.addEventListener('click', () => self.choose(it));
+    });
+  }
+
+  paintHighlight() {
+    if (!this.listEl) return;
+    const rows = this.listEl.children || [];
+    for (let i = 0; i < rows.length; i += 1) {
+      if (rows[i] && rows[i].toggleClass) rows[i].toggleClass('is-active', i === this.highlight);
+    }
+  }
+
+  moveHighlight(step) {
+    if (!this.items.length) return;
+    let next = this.highlight + step;
+    if (next < 0) next = 0;
+    if (next > this.items.length - 1) next = this.items.length - 1;
+    this.highlight = next;
+    this.paintHighlight();
+  }
+
+  choose(it) {
+    let entry = null;
+    if (it.kind === 'command') {
+      entry = { type: 'command', id: it.id, nameSnapshot: it.name, icon: '' };
+    } else if (it.kind === 'file') {
+      entry = { type: 'file', path: it.path, icon: '' };
+    } else if (it.kind === 'folder') {
+      entry = { type: 'folder', path: it.path, icon: '' };
+    }
+    if (!entry) return;
+    this.close();
+    if (typeof this.opts.onChoose === 'function') this.opts.onChoose(entry);
+  }
+}
+
+/** 去掉 `lucide-` 前缀（setIcon 两种写法都认，写进配置时用短名更好读） */
+function stripLucidePrefix(name) {
+  const v = asString(name).trim();
+  return v.indexOf('lucide-') === 0 ? v.slice(7) : v;
+}
 
 /* =====================================================================================
  * 五、插件本体
@@ -1617,6 +2006,143 @@ class QuickPanelPlugin extends Plugin {
     this.savePanelConfig(this.config);
   }
 
+  /* ---- 增 / 删 / 排序（都只改那一个 JSON，改完立刻落盘并重绘面板） ---- */
+
+  /** 在 index 处插入一条新格子；带 nameSnapshot 便于以后失效时重新绑定 */
+  addItem(entry, index) {
+    const clean = sanitizeNewItem(entry);
+    if (!clean) {
+      new Notice('这条没法加进面板');
+      return false;
+    }
+    const list = this.config.items.slice();
+    const at = typeof index === 'number' && index >= 0 && index <= list.length ? index : list.length;
+    // 已经在面板里就不重复加
+    const key = itemKey(clean);
+    if (list.some((it) => itemKey(it) === key)) {
+      new Notice('这条已经在面板里了：' + (cleanLabel(clean.label) || key));
+      return false;
+    }
+    list.splice(at, 0, clean);
+    this.config = normalizePanelConfig({
+      version: CONFIG_VERSION,
+      panel: this.config.panel,
+      items: list,
+      recent: this.config.recent,
+    });
+    this.savePanelConfig(this.config);
+    return true;
+  }
+
+  /** 改一条格子的显示名/图标（部分更新） */
+  updateItem(item, patch) {
+    const key = itemKey(item);
+    const target = this.config.items.filter((it) => itemKey(it) === key)[0];
+    if (!target) return false;
+    if (patch && Object.prototype.hasOwnProperty.call(patch, 'label')) {
+      const label = cleanLabel(patch.label);
+      if (label) target.label = label;
+      else delete target.label;
+    }
+    if (patch && Object.prototype.hasOwnProperty.call(patch, 'icon')) {
+      const icon = asString(patch.icon).trim();
+      if (icon) target.icon = icon;
+      else delete target.icon;
+    }
+    this.savePanelConfig(this.config);
+    return true;
+  }
+
+  /** 从面板移除一条（只改 JSON，不动任何文件） */
+  removeItem(item) {
+    const key = itemKey(item);
+    const list = this.config.items.filter((it) => itemKey(it) !== key);
+    if (list.length === this.config.items.length) return false;
+    this.config = normalizePanelConfig({
+      version: CONFIG_VERSION,
+      panel: this.config.panel,
+      items: list,
+      recent: this.config.recent,
+    });
+    this.savePanelConfig(this.config);
+    return true;
+  }
+
+  /** 把一条移到新下标（to 为元素移除后的插入位置） */
+  moveItem(item, to) {
+    const key = itemKey(item);
+    const list = this.config.items.slice();
+    const from = list.findIndex((it) => itemKey(it) === key);
+    if (from < 0) return false;
+    const moved = list.splice(from, 1)[0];
+    const at = Math.max(0, Math.min(typeof to === 'number' ? to : list.length, list.length));
+    list.splice(at, 0, moved);
+    this.config = normalizePanelConfig({
+      version: CONFIG_VERSION,
+      panel: this.config.panel,
+      items: list,
+      recent: this.config.recent,
+    });
+    this.savePanelConfig(this.config);
+    return true;
+  }
+
+  /** 面板里所有格子的显示名（给"最近用过"取名字用） */
+  itemDisplayName(item) {
+    const label = cleanLabel(item.label);
+    if (label) return label;
+    const snap = cleanLabel(item.nameSnapshot);
+    if (snap) return snap;
+    if (itemType(item) === 'command') {
+      const cmd = this.commandFor(asString(item.id));
+      if (cmd && cleanLabel(cmd.name)) return cleanLabel(cmd.name);
+      return asString(item.id);
+    }
+    const path = normalizeVaultPath(asString(item.path));
+    return path.split('/').pop() || path;
+  }
+
+  /* ---- 面板内即时添加 ---- */
+
+  /** 打开"添加"选择器：命令 + 库内文件 + 文件夹；选中即写入并重绘（面板不关） */
+  openPicker(modal, insertAt) {
+    const name = modal ? modal.query : '';
+    const modalRef = modal;
+    const self = this;
+    const picker = new QuickPanelPickerModal(this.app, {
+      commands: this.commandRegistry().all,
+      files: this.app.vault.getFiles(),
+      query: name,
+      onChoose: function (entry) {
+        const ok = self.addItem(entry, insertAt);
+        if (ok) {
+          new Notice('已添加：' + (cleanLabel(entry.label) || itemKey(entry)));
+          if (modalRef) {
+            modalRef.config = self.config;
+            try {
+              modalRef.onOpen();
+            } catch (e) {
+              self.reopen();
+            }
+          } else {
+            self.reopen();
+          }
+        }
+      },
+    });
+    picker.open();
+  }
+
+  /** 图标候选（运行期全量优先） */
+  iconNames() {
+    try {
+      if (typeof getIconIds === 'function') return getIconIds() || [];
+    } catch (e) {
+      /* 拿不到就用兜底清单 */
+    }
+    return [];
+  }
+
   /** 记一笔执行历史（进诊断文件用；面板最多留 50 条） */
   logExecution(label) {
     this.execLog = this.execLog || [];
@@ -1683,3 +2209,12 @@ module.exports.findMissingItems = findMissingItems;
 module.exports.filterItems = filterItems;
 module.exports.parsePanelFile = parsePanelFile;
 module.exports.serializePanelText = serializePanelText;
+module.exports.sanitizeNewItem = sanitizeNewItem;
+module.exports.stripCommandPrefix = stripCommandPrefix;
+module.exports.stripLucidePrefix = stripLucidePrefix;
+module.exports.buildPickerItems = buildPickerItems;
+module.exports.filterPickerItems = filterPickerItems;
+module.exports.modalIconCandidates = modalIconCandidates;
+module.exports.QuickPanelPickerModal = QuickPanelPickerModal;
+module.exports.IconSuggestModal = IconSuggestModal;
+module.exports.ConfirmLikeModal = ConfirmLikeModal;

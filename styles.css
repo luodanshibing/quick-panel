@@ -369,8 +369,111 @@
   white-space: nowrap;
 }
 
-/* ---------- 确认弹窗（重新绑定等） ---------- */
+/* ---------- 添加格子选择器（命令 / 笔记 / 文件夹） ---------- */
 
+.qp-picker .modal {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+}
+
+.qp-picker .modal-content {
+  padding: 12px 14px 8px;
+}
+
+.qp-picker-search {
+  margin-bottom: 8px;
+}
+
+.qp-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: min(52vh, 420px);
+  overflow: auto;
+}
+
+.qp-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.qp-picker-item.is-active,
+.qp-picker-item:hover {
+  background: var(--background-modifier-hover);
+}
+
+.qp-picker-icon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
+.qp-picker-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.qp-picker-text {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.qp-picker-label {
+  font-size: 13px;
+  color: var(--text-normal);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.qp-picker-sub {
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 图标建议项 */
+
+.qp-suggest-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.qp-suggest-icon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
+.qp-suggest-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.qp-suggest-label {
+  font-size: 13px;
+}
+
+/* 确认窗里的输入框（改名用） */
+
+.qp-confirm-input {
+  margin-bottom: 12px;
+}
+
+.qp-confirm-input .qp-search-input {
+  width: 100%;
+}
+
+/* ---------- 确认弹窗（重新绑定等） ---------- */
 .modal-container.qp-confirm {
   position: fixed;
   inset: 0;

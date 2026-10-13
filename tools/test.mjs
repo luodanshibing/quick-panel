@@ -771,7 +771,7 @@ try {
   eq(modal.contentEl.querySelectorAll('qp-count').length, 0, '头部不再显示"6 格 · N 项待处理"');
   eq(modal.contentEl.querySelectorAll('qp-hint').length, 0, '底部不再有操作提示小字');
   const headerBtns = modal.contentEl.querySelector('qp-actions').querySelectorAll('qp-icon-btn');
-  eq(headerBtns.length, 1, '右上一个 × 都没有（用户要求全去掉），只剩「更多」一个按钮');
+  eq(headerBtns.length, 2, '右上一个 × 都没有（用户要求全去掉）：只剩「＋ 添加」和「⋯ 更多」两个按钮');
   const search = modal.contentEl.querySelector('qp-search-input');
   ok(!!search, '本用例显式开了搜索框时才渲染（默认已关闭）');
   search.value = '首页';
@@ -1276,6 +1276,179 @@ try {
   eq(clickLog, ['demo:throws'], '抛错的命令确实被调用过');
 } catch (err) {
   ok(false, '执行器语义用例抛异常：' + (err && err.message));
+}
+
+/* ============ 10. 第 2 批：增 / 删 / 排序 / 选择器（纯函数 + 主机操作） ============ */
+
+group('增删排序与选择器');
+
+/* 10.1 新条目整理 */
+eq(QP.sanitizeNewItem({ type: 'command', id: '  app:reload  ', name: '重载应用' }), { type: 'command', id: 'app:reload', nameSnapshot: '重载应用' }, '命令条目：去空白 + 带快照');
+eq(QP.sanitizeNewItem({ type: 'file', path: 'a\\b.md' }).path, 'a/b.md', '文件条目：路径分隔符规整');
+eq(QP.sanitizeNewItem({ type: 'folder', path: 'F Craftlab', label: ' 项目 ' }).label, '项目', 'label 去掉首尾空格');
+eq(QP.sanitizeNewItem({ type: 'command', id: '   ' }), null, '空 id 的命令条目 → null（不加进面板）');
+eq(QP.sanitizeNewItem({ type: 'url', url: 'https://x' }), null, '不支持的 type → null');
+eq(QP.sanitizeNewItem(null), null, 'null 输入 → null（不抛异常）');
+eq(QP.sanitizeNewItem({ type: 'command', id: 'app:reload' }).icon, undefined, '空 icon 不写进配置');
+
+/* 10.2 命令名前缀 */
+eq(QP.stripCommandPrefix('QuickAdd: 快速捕捉'), '快速捕捉', '去掉 "插件名: " 前缀');
+eq(QP.stripCommandPrefix('设置'), '设置', '没有前缀的名字保持原样');
+eq(QP.stripCommandPrefix('日记: 追加一行'), '日记: 追加一行', '中文名里的冒号不当前缀（避免误删）');
+
+/* 10.3 选择器数据源 */
+const pickerInput = {
+  commands: [
+    { id: 'app:reload', name: '重载应用' },
+    { id: 'global-search:open', name: '全局搜索' },
+    { id: 'quickadd:choice:x', name: 'QuickAdd: 快速捕捉', icon: 'zap' },
+    { name: '没有 id 的命令' },
+  ],
+  files: [
+    { path: '1 Obsidian/页面/Home.md' },
+    { path: '1 Obsidian/页面' , children: [] },
+    { path: 'F Craftlab', children: [] },
+    null,
+  ],
+};
+const pickerItems = QP.buildPickerItems(pickerInput);
+eq(pickerItems.filter((i) => i.kind === 'command').length, 3, '命令：跳过没有 id 的');
+eq(pickerItems.filter((i) => i.kind === 'file').length, 1, '文件：只收不带 children 的');
+eq(pickerItems.filter((i) => i.kind === 'folder').length, 2, '文件夹：收带 children 的');
+eq(pickerItems.filter((i) => i.id === 'quickadd:choice:x')[0].label, '快速捕捉', '命令显示名去掉了插件前缀');
+eq(pickerItems.filter((i) => i.kind === 'file')[0].label, 'Home', '文件显示名去掉 .md');
+eq(pickerItems.filter((i) => i.kind === 'folder').map((i) => i.label).sort(), ['1 Obsidian/页面'.split('/').pop(), 'F Craftlab'].sort(), '文件夹用末级目录名');
+
+/* 10.4 选择器过滤：前缀优先 */
+const manyItems = [
+  { kind: 'command', id: 'app:open-settings', label: '设置' },
+  { kind: 'command', id: 'workspace:new-tab', label: '新标签页' },
+  { kind: 'file', path: 'a/设置相关.md', label: '设置相关' },
+  { kind: 'command', id: 'editor:toggle', label: 'a设置在后' },
+];
+eq(QP.filterPickerItems(manyItems, '').length, 4, '空查询 → 全部（受 limit 约束）');
+eq(QP.filterPickerItems(manyItems, '设置')[0].label, '设置', '前缀命中的排第一');
+const matchAll = QP.filterPickerItems(manyItems, '设置');
+eq(matchAll.length, 3, '包含"设置"的都命中（前缀 + 路径 + 中间）');
+eq(QP.filterPickerItems(manyItems, 'zzz').length, 0, '无匹配 → 空');
+eq(QP.filterPickerItems(manyItems, '', 2).length, 2, 'limit 生效');
+
+/* 10.5 图标候选清洗 */
+const iconCands = QP.modalIconCandidates(['lucide-settings', 'settings', '🚩', 'not a name', 'refresh-cw']);
+ok(iconCands.indexOf('settings') >= 0, '保留合法图标名');
+eq(iconCands.filter((c) => c === 'settings').length, 1, '去重（lucide-settings 与 settings 只留一个）');
+ok(iconCands.indexOf('🚩') < 0, '过滤 emoji');
+ok(iconCands.indexOf('not a name') < 0, '过滤含空格的非法名');
+ok(iconCands.length > 50, '拿不到运行期清单时也有兜底候选（实际 ' + iconCands.length + '）');
+
+/* 10.6 主机操作：增 / 改 / 删 / 排序（只碰配置，写盘用假 adapter） */
+class CountingVaultAdapter {
+  constructor() {
+    this.store = {};
+    this.writes = 0;
+  }
+  async exists(p) {
+    return Object.prototype.hasOwnProperty.call(this.store, p);
+  }
+  async read(p) {
+    return this.store[p];
+  }
+  async write(p, text) {
+    this.store[p] = text;
+    this.writes += 1;
+  }
+  async remove(p) {
+    delete this.store[p];
+  }
+  getBasePath() {
+    return 'E:/fake';
+  }
+}
+
+async function makeHost(items) {
+  const adapter = new CountingVaultAdapter();
+  const plugin = Object.create(QP.QuickPanelPlugin.prototype);
+  plugin.app = {
+    vault: {
+      adapter: adapter,
+      getAbstractFileByPath: () => null,
+      getFiles: () => [],
+      create: async () => {},
+      modify: async () => {},
+    },
+    commands: {
+      listCommands: () => [
+        { id: 'app:reload', name: '重载应用' },
+        { id: 'app:open-settings', name: '设置' },
+      ],
+      findCommand: (id) => ({ id: id, name: id }),
+    },
+    workspace: { activeEditor: null },
+    internalPlugins: { getEnabledPluginById: () => null },
+  };
+  plugin.configPath = QP.CONFIG_NAME;
+  plugin.config = QP.normalizePanelConfig({ version: 2, items: items, recent: [] });
+  plugin.registry = null;
+  plugin.logExecution = () => {};
+  return { plugin: plugin, adapter: adapter };
+}
+
+try {
+  const h = await makeHost([
+    { type: 'command', id: 'app:reload', label: '重载' },
+    { type: 'command', id: 'app:open-settings', label: '设置' },
+  ]);
+  const p = h.plugin;
+
+  // 增
+  eq(p.addItem({ type: 'command', id: 'workspace:new-tab', name: '新标签页' }), true, '加一条命令 → 成功');
+  eq(p.config.items.length, 3, '条目数 +1');
+  eq(p.config.items[2].id, 'workspace:new-tab', '默认加在末尾');
+  eq(p.config.items[2].nameSnapshot, '新标签页', '自动写入 nameSnapshot（以后失效可重新绑定）');
+  eq(p.addItem({ type: 'command', id: 'workspace:new-tab' }), false, '重复添加 → 拒绝');
+  eq(p.config.items.length, 3, '拒绝后条目数不变');
+  eq(p.addItem({ type: 'file', path: 'a/b.md' }, 0), true, '指定位置插入');
+  eq(p.config.items[0].path, 'a/b.md', '插到了第 0 位');
+  eq(p.addItem({ type: 'url', url: 'x' }), false, '非法条目 → 拒绝');
+
+  // 改
+  const target = p.config.items[1];
+  p.updateItem(target, { label: '我的重载' });
+  eq(p.config.items[1].label, '我的重载', '改名生效');
+  p.updateItem(p.config.items[1], { icon: 'zap' });
+  eq(p.config.items[1].icon, 'zap', '换图标生效');
+  p.updateItem(p.config.items[1], { label: '   ' });
+  eq(p.config.items[1].label, undefined, 'label 清空 → 删除该字段（回退用命令名显示）');
+  p.updateItem(p.config.items[1], { icon: '' });
+  eq(p.config.items[1].icon, undefined, 'icon 清空 → 删除该字段（回退默认图标）');
+
+  // 排序
+  const first = p.config.items[0];
+  p.moveItem(first, 2);
+  eq(p.config.items[2].path, 'a/b.md', '右移：原来第 0 位现在第 2 位');
+  p.moveItem(p.config.items[2], 0);
+  eq(p.config.items[0].path, 'a/b.md', '左移回到第 0 位');
+  eq(p.config.items.length, 4, '移动不改变条目数');
+  eq(itemIds(p.config.items), ['file:a/b.md', 'command:app:reload', 'command:app:open-settings', 'command:workspace:new-tab'].map(String), '移动后顺序正确');
+
+  // 删
+  const before = p.config.items.length;
+  eq(p.removeItem(p.config.items[0]), true, '删除一条 → 成功');
+  eq(p.config.items.length, before - 1, '条目数 -1');
+  eq(p.config.items.filter((it) => it.path === 'a/b.md').length, 0, '被删的条目不在配置里了');
+  eq(p.removeItem({ type: 'file', path: '不存在.md' }), false, '删不存在的条目 → 返回 false');
+
+  // 每次操作都只写那一个文件
+  ok(h.adapter.writes > 5, '每次增删改都会落盘（写次数 ' + h.adapter.writes + '）');
+  ok(Object.keys(h.adapter.store).every((k) => k === QP.CONFIG_NAME), '写盘目标只有配置文件：' + JSON.stringify(Object.keys(h.adapter.store)));
+  const written = JSON.parse(h.adapter.store[QP.CONFIG_NAME]);
+  ok(Array.isArray(written.items) && written.items.length === p.config.items.length, '落盘内容与内存配置一致');
+} catch (err) {
+  ok(false, '增删排序用例抛异常：' + (err && err.stack ? err.stack.split('\n').slice(0, 2).join(' | ') : err));
+}
+
+function itemIds(items) {
+  return (items || []).map((it) => QP.itemKey(it));
 }
 
 /* ============ 结果 ============ */

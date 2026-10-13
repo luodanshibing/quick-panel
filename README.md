@@ -2,13 +2,15 @@
 
 An icon grid that one hotkey away — pin the commands and notes you actually use onto a panel that appears where your mouse is, so you don't have to memorise hotkeys or type search queries.
 
-> Status: **v0.3.1 — batch 1 of 3 (panel + execute + icons)**. Working today: the panel, keyboard/mouse execution, icons from three sources, live config file, broken-item detection. Coming next: add-a-tile from inside the panel, tile context menu, file/folder tiles, import/export. See *Roadmap* below.
+> Status: **v0.4.0 — batch 2 (add / edit / reorder + recent)**. Working today: the panel, keyboard/mouse execution, icons from three sources, live config file, broken-item detection, **add tiles from inside the panel**, **right-click editing**, **the "recently used" row**. Coming next: import/export for multi-machine merging.
 >
-> **v0.3.1**
-> * **Keyboard now goes through Obsidian's `Scope`** (same mechanism the command palette uses). Inside a modal, key events hit the modal's scope *before* the DOM — my handlers were only bound to the modal element, so the arrow keys had no handler (no highlight movement) and `Enter` fell through to the browser, which activated whatever button had focus (that is why Enter opened the ⋯ menu). `ArrowUp/Down/Left/Right`, `Home`, `End` and `Enter` are now registered on the modal's own scope; `Escape` is left to the base class.
-> * **The panel closes as soon as a tile runs** (you asked for this: leaving it open obstructs the UI the command creates and causes strange states). Closing is synchronous — no timer — and the command is invoked right after, in line with how the command palette works.
+> **v0.4.0 — you can now build the panel from inside the panel.**
+> * **Add**: the `+` button in the header (or a tile's right-click → *insert after this tile*) opens a picker with **all commands + your notes + your folders**; type to filter, arrows to select, Enter to add. It resolves commands through `app.commands.findCommand`-backed full table, so context-dependent commands can be added too. The tile appears immediately — the panel is not closed, and the JSON is written right away.
+> * **Edit**: right-click a tile → **rename** / **change icon** (with live suggestions from the full Lucide set via `getIconIds()`, or type an emoji / an in-vault image path) / **move left** / **move right** / **insert after** / **delete** (with confirmation). Every change is written to `快捷面板.json` immediately and the panel re-renders in place.
+> * **Recent**: the **「最近用过」row sits directly under the grid** (labels + icons, click to run). It only lists items that are *not* already on the panel, so it is the "long tail" of things you use occasionally. Toggle it with `panel.showRecent` (or ⋯ → the toggle item).
+> * Deleting a tile removes it **from the panel only** — no note, file or plugin is touched.
 >
-> **v0.3.0** found the root cause of "clicking does nothing": `listCommands()` is filtered by `checkCallback`, so context-dependent commands were missing from the panel's index; tiles now resolve commands via `app.commands.findCommand(id)` (the unfiltered table). **v0.2.0** removed every ×, made tiles fire on press-and-release, and gave the diagnostic command three write fallbacks; **v0.1.6** fixed the `executeCommandById` return-value misuse; **v0.1.5** made centering pure CSS; **v0.1.3** renamed the panel to **快捷面板**.
+> **v0.3.1** fixed keyboard handling (keys must go through Obsidian's `Scope`; now arrows/Enter/Home/End work, and the panel closes as soon as a tile runs). **v0.3.0** fixed the root cause of "clicking does nothing" (`listCommands()` is filtered by `checkCallback`; commands are now resolved via `findCommand`). **v0.1.x** history: pure-CSS centering, no ×, three-way diagnostic writes, config rename to **快捷面板**.
 
 ## What it is
 
@@ -119,13 +121,15 @@ MIT — see [LICENSE](LICENSE).
 
 一个快捷键呼出的**图标网格面板**：把你真正在用的命令、笔记、文件夹钉在眼前，不用记快捷键，也不用打字搜索。
 
-> 状态：**v0.3.1 —— 三批里的第 1 批（面板 + 执行 + 图标）**。现在能用的：面板本体、键盘/鼠标执行、三种图标来源、库内配置文件实时生效、失效项检测。下一批：面板内即时添加、格子右键菜单；再下一批：文件/文件夹项打磨与导入导出。
+> 状态：**v0.4.0 —— 第 2 批（增 / 删 / 排序 + 最近用过）**。现在能用的：面板本体、键盘/鼠标执行、三种图标来源、库内配置实时生效、失效项检测、**面板内即时添加**、**右键编辑格子**、**「最近用过」一行**。再下一批：JSON 导入导出（多机合并）。
 >
-> **v0.3.1**
-> * **键盘改走 Obsidian 的 `Scope`**（与命令面板同一套机制）。弹窗里的按键是**先过 Scope、再到 DOM**；我原来只把处理器挂在弹窗元素上，所以方向键根本没人处理（高亮不动），`Enter` 则落给浏览器去"激活当前聚焦的按钮"（这就是为什么 Enter 打开了 ⋯ 菜单）。现在 `ArrowUp/Down/Left/Right`、`Home`、`End`、`Enter` 都注册在弹窗自己的 scope 上，`Escape` 留给基类。
-> * **执行命令时立即关闭面板**（按你的要求：面板常开会挡住命令产生的界面，造成"奇怪现象"）。关闭是**同步**的、不用定时器，紧接着就调用命令 —— 与命令面板的做法一致。
+> **v0.4.0 —— 现在可以直接在面板里搭建面板。**
+> * **添加**：头部「＋」（或某个格子右键 →「插到这一格后面」）打开选择器，数据源是**全部命令 + 你的笔记 + 文件夹**；打字过滤、方向键选择、Enter 加入。命令走完整命令表，所以依赖上下文的命令也能加进来。选中后**面板不关、立刻写入 JSON、就地出现新格子**。
+> * **编辑**：格子右键 → **改名** / **换图标**（带全量图标名实时建议，也可填 emoji 或库内图片路径）/ **左移** / **右移** / **插到后面** / **删除**（有确认）。每次改动都立即写进 `快捷面板.json`，面板就地重绘。
+> * **最近用过**：**「最近用过」一行就在网格下面**（名字 + 图标，点一下即执行）。只列**不在面板里**的项 —— 它是"偶尔用一次"的补充。开关是 `panel.showRecent`（也可用 ⋯ 菜单切换）。
+> * 删除格子**只从面板移除**，不动任何笔记、文件或插件。
 >
-> **v0.3.0** 找到"点了没反应"的根因：`listCommands()` 按 `checkCallback` 过滤，上下文相关的命令不在面板索引里；现在解析格子直接走 `app.commands.findCommand(id)`（未过滤的完整表）。**v0.2.0** 去掉所有 ×、格子改为按下+松开触发、诊断命令三重落盘；**v0.1.6** 修了 `executeCommandById` 返回值误用；**v0.1.5** 居中改纯 CSS；**v0.1.3** 面板改名 **快捷面板**。
+> **v0.3.1** 修好键盘（按键必须先过 Obsidian 的 `Scope`；现在方向键/Enter/Home/End 都可用，且执行后立即关面板）。**v0.3.0** 修掉"点了没反应"的根因（`listCommands()` 按 `checkCallback` 过滤；现在用 `findCommand` 取命令）。**v0.1.x** 历史：纯 CSS 居中、去掉所有 ×、诊断三重落盘、配置改名 **快捷面板**。
 
 ## 它是什么
 
