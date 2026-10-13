@@ -719,10 +719,31 @@ class QuickPanelModal extends Modal {
         : '（库内已找不到这个路径）';
       btn.setAttribute('title', name + ' ' + why);
     }
-    btn.addEventListener('click', () => this.executeEntry(entry));
+    // 触发方式：click 为主，pointerup 兜底（两者都会调用，但 400ms 内同一条只执行一次）
+    this.bindActivate(btn, () => this.executeEntry(entry));
     btn.addEventListener('mouseenter', () => this.setHighlight(index));
     btn.addEventListener('contextmenu', (evt) => this.openItemMenu(evt, entry));
     return btn;
+  }
+
+  /**
+   * 给一个元素绑定"按下即执行"。
+   *
+   * 为什么要两条事件：真机反馈"点了没反应"，而离线复现证明 click 处理器一切正常 ——
+   * 那么剩下的可能是 click 事件没送达（元素在 mousedown/mouseup 之间被重绘或重挂时，
+   * 浏览器不会补发 click）。`pointerup` 在鼠标松开时就会到，比 click 更早也更可靠；
+   * 两者都接，用 400ms 去重保证只执行一次。
+   */
+  bindActivate(el, run) {
+    const fire = () => {
+      const now = Date.now();
+      if (this._lastActivate && now - this._lastActivate < 400) return;
+      this._lastActivate = now;
+      run();
+    };
+    el.addEventListener('pointerup', fire);
+    el.addEventListener('click', fire);
+    return el;
   }
 
   paintIcon(parent, item) {
@@ -848,6 +869,10 @@ class QuickPanelModal extends Modal {
 
   async executeEntry(entry) {
     if (!entry) return;
+    // 点击日志：进诊断文件。若"点了没反应"，这条能立刻区分"点击根本没到"与"命令没跑"
+    this.host.logClick(
+      '点击 ' + this.displayName(entry.item) + '（type=' + entry.type + (entry.missing ? ', 失效=' + entry.missing : '') + '）'
+    );
     if (entry.type === 'command') return this.runCommand(entry.item);
     if (entry.type === 'file') return this.openFile(entry.item);
     if (entry.type === 'folder') return this.revealFolder(entry.item);
@@ -1208,6 +1233,22 @@ class QuickPanelPlugin extends Plugin {
           '已把面板升级到 v' + CONFIG_VERSION + '：默认格子换成核验过的核心命令（旧示例里的"关系图谱/后退/前进"依赖上下文，点了不一定会执行）。',
       };
     }
+    // v2 之后又追加过一条口径（用户反馈"面板里不该有搜索框"）：随加载就地改掉，不用等下次升级
+    if (parsed.panel && parsed.panel.showSearch === true) {
+      const trimmed = normalizePanelConfig({
+        version: CONFIG_VERSION,
+        panel: Object.assign({}, parsed.panel, { showSearch: false }),
+        items: parsed.items,
+        recent: parsed.recent,
+      });
+      this.config = trimmed;
+      try {
+        await this.writePanelConfig(trimmed, { silent: true });
+      } catch (e) {
+        /* 写不进去也不影响本次使用 */
+      }
+      return { config: trimmed, fromDisk: true, notice: renameNotice };
+    }
     return { config: parsed, fromDisk: true, notice: renameNotice };
   }
 
@@ -1222,7 +1263,7 @@ class QuickPanelPlugin extends Plugin {
       });
     const next = normalizePanelConfig({
       version: CONFIG_VERSION,
-      panel: config.panel,
+      panel: Object.assign({}, config.panel, { showSearch: false }),
       items: isStock ? V2_DEFAULT_ITEMS : items,
       recent: config.recent,
     });
@@ -1431,6 +1472,10 @@ class QuickPanelPlugin extends Plugin {
       lines.push('最近用过=' + modal.recent.length + '；状态栏="' + (modal.statusEl ? modal.statusEl.textContent : '') + '"');
       if (modal.searchEl) lines.push('搜索框 ' + box(modal.searchEl));
       lines.push('最近 5 次执行：' + (this.execLog.slice(-5).map((e) => e.name).join(' / ') || '（无）'));
+      lines.push('--- 最近 14 条点击/执行（▸ = 点击到了面板，无 ▸ 说明点击根本没到面板）---');
+      const tail = this.execLog.slice(-14);
+      if (!tail.length) lines.push('（空：还没点过任何格子）');
+      tail.forEach((e) => lines.push('  ' + e.at + '  ' + e.name));
       new Notice('已导出诊断到库根 .quick-panel-diag.txt（' + lines.length + ' 行）');
     }
     const text = lines.join('\n') + '\n';
@@ -1466,10 +1511,16 @@ class QuickPanelPlugin extends Plugin {
     this.savePanelConfig(this.config);
   }
 
+  /** 记一笔执行历史（进诊断文件用；面板最多留 50 条） */
   logExecution(label) {
     this.execLog = this.execLog || [];
     this.execLog.push({ at: new Date().toISOString(), name: label });
     if (this.execLog.length > 50) this.execLog.splice(0, this.execLog.length - 50);
+  }
+
+  /** 记一次点击（与 logExecution 同一个日志，前缀区分）—— 排查"点了没反应"用 */
+  logClick(label) {
+    this.logExecution('▸ ' + label);
   }
 
   /* ---- 面板 ---- */

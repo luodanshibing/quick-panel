@@ -91,6 +91,8 @@ const html = `<!doctype html>
 <body>
   <div class="modal-container quick-panel" style="--qp-width: 500px">
     <div class="modal-bg"></div>
+    <!-- Obsidian 原生关闭按钮：在 .modal-container 里，不在 .modal 里（历史上就是它没被隐藏） -->
+    <button class="modal-close-button" aria-label="关闭">×</button>
     <div class="modal">
       <div class="modal-close-button">×</div>
       <div class="modal-content">

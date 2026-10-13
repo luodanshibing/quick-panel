@@ -109,8 +109,13 @@
   overflow: hidden;
 }
 
-.quick-panel .modal-close-button {
-  display: none;
+/*
+ * 隐藏 Obsidian 自带的关闭按钮（用户反馈"为什么有两个 ×"）。
+ * ⚠️ 它在 .modal-container 里、**不是 .modal 的子元素** —— 用 `.quick-panel .modal-close-button`
+ * 这种后代选择器根本不命中（v0.1.6 就是这么漏的）。
+ */
+.modal-container.quick-panel > .modal-close-button {
+  display: none !important;
 }
 
 /* 面板卡片宽度 = 列数 × 格宽（JS 只写 --qp-width 这一个数字），不让 Obsidian 的 --dialog-width(100vw) 拉伸它 */
@@ -479,6 +484,8 @@
 <body>
   <div class="modal-container quick-panel" style="--qp-width: 500px">
     <div class="modal-bg"></div>
+    <!-- Obsidian 原生关闭按钮：在 .modal-container 里，不在 .modal 里（历史上就是它没被隐藏） -->
+    <button class="modal-close-button" aria-label="关闭">×</button>
     <div class="modal">
       <div class="modal-close-button">×</div>
       <div class="modal-content">

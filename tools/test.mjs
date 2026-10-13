@@ -24,6 +24,16 @@ const ROOT = join(HERE, '..');
 let pass = 0;
 let fail = 0;
 const failures = [];
+/**
+ * 提示桩：Notice 必须在 main.js 加载**之前**就装好 —— main.js 是在模块顶层
+ * `const { Notice } = require('obsidian')` 解构的，之后再换 stub 上的字段已经改不到它。
+ */
+const noticeSink = { record: false, items: [] };
+class NoticeStub {
+  constructor(message) {
+    if (noticeSink.record) noticeSink.items.push(String(message));
+  }
+}
 function ok(cond, label) {
   if (cond) {
     pass += 1;
@@ -238,11 +248,11 @@ class StubPlugin {
   registerEvent() {}
 }
 
-const obsidianStub = new Proxy(  {
-    Plugin: StubPlugin,
-    Modal: StubModal,
-    Notice: class Notice {},
-    Menu: class Menu {},
+const obsidianStub = new Proxy({
+  Plugin: StubPlugin,
+  Modal: StubModal,
+  Notice: NoticeStub,
+  Menu: class Menu {},
     setIcon() {},
     getIconIds() {
       return ['lucide-settings', 'lucide-home', 'home'];
@@ -608,6 +618,9 @@ ok(/position:\s*relative/.test(cardRule), '卡片 position: relative（作为 fl
 ok(!/position:\s*absolute/.test(cardRule), '卡片不再是 absolute（absolute 会被父级 flex 定位二次偏移）');
 ok(/margin:\s*0/.test(cardRule), '卡片 margin 归零');
 ok(/grid-template-columns: repeat\(var\(--qp-cols/.test(STYLES), 'CSS 的列数由 --qp-cols 变量驱动');
+ok(/\.modal-container\.quick-panel\s*>\s*\.modal-close-button/.test(STYLES), '隐藏原生关闭按钮的选择器必须从 .modal-container 起（它在容器里，不在 .modal 里）');
+ok(/\.modal-close-button\s*\{[^}]*display:\s*none\s*!important/.test(STYLES), '隐藏用 !important（原生按钮有自己的显示规则）');
+ok(!/\.quick-panel \.modal-close-button\s*\{/.test(STYLES), '不再使用那个打偏的后代选择器');
 ok(/\.qp-cell[\s\S]{0,400}box-shadow: none/.test(STYLES), '格子按钮强制清掉主题底色/阴影');
 
 /* 常用方法：用最简对象直接调用（不建 DOM） */
@@ -895,8 +908,218 @@ try {
     }),
   });
   eq(customV2.res.config.items[0].label, '我的命令', '已经是 v2 的配置不做任何改动');
+
+  /* v2 但还开着过滤框（用户反馈"去掉过滤框"）→ 随加载就地改掉 */
+  const stillHasSearch = await runMigration({
+    '快捷面板.json': JSON.stringify({
+      version: 2,
+      panel: { columns: 'auto', showRecent: true, iconSize: 40, showSearch: true },
+      items: [{ type: 'command', id: 'editor:toggle-source', label: '我的命令' }],
+      recent: [],
+    }),
+  });
+  eq(stillHasSearch.res.config.panel.showSearch, false, 'v2 里残留的 showSearch=true 会被就地关掉');
+  ok(stillHasSearch.written.indexOf(QP.CONFIG_NAME) >= 0, '改完写回文件（下次打开不再显示过滤框）');
+  eq(stillHasSearch.res.config.items[0].label, '我的命令', '只改这一个开关，用户的格子一个都不动');
 } catch (e) {
   ok(false, '迁移用例抛异常：' + (e && e.message));
+}
+
+/* ============ 9. 点击链路（离线复现"点了没反应"） ============ */
+
+group('点击链路：从点格子到命令真正被调用');
+
+const clickLog = [];
+const clickNotices = noticeSink.items; // 直接复用顶层 Notice 桩的记录数组
+const clickFiles = {
+  '1 Obsidian/页面/Home.md': { path: '1 Obsidian/页面/Home.md' },
+};
+const SMOKE_COMMANDS = [
+  { id: 'app:open-settings', name: '设置' },
+  { id: 'global-search:open', name: '全局搜索', checkCallback: () => true },
+  { id: 'demo:editor-only', name: '需要编辑器', editorCallback: () => true },
+  { id: 'demo:throws', name: '会抛错的命令', callback: () => { throw new Error('boom'); } },
+];
+const clickApp = {
+  vault: {
+    adapter: { write: async () => {}, exists: async () => true, read: async () => '{}' },
+    getAbstractFileByPath: (p) => clickFiles[p],
+    getResourcePath: (p) => 'app://local/' + p,
+  },
+  workspace: { activeEditor: null, getLeaf: () => ({ openFile: async () => {} }) },
+  commands: {
+    listCommands: () => SMOKE_COMMANDS.slice(),
+    findCommand: (id) => SMOKE_COMMANDS.find((c) => c.id === id),
+    executeCommandById: (id) => {
+      clickLog.push(id);
+      const cmd = SMOKE_COMMANDS.find((c) => c.id === id);
+      if (!cmd) return false;
+      // 照 obsidian.asar 的语义：找到命令就返回 true；命令内部抛错被吞掉
+      try {
+        if (typeof cmd.callback === 'function') cmd.callback();
+      } catch (e) {
+        return true;
+      }
+      return true;
+    },
+  },
+  internalPlugins: { getEnabledPluginById: () => null },
+};
+
+// Notice 桩：把提示记下来（断言"不静默"用）
+class CountingNotice {
+  constructor(msg) {
+    clickNotices.push(String(msg));
+  }
+}
+obsidianStub.Notice = CountingNotice;
+
+globalThis.document = {
+  body: new FakeElement('body'),
+  addEventListener() {},
+  removeEventListener() {},
+};
+globalThis.document.defaultView = globalThis.window;
+const clickHost = {
+  commandRegistry() {
+    const all = SMOKE_COMMANDS;
+    const byId = {};
+    all.forEach((c) => (byId[c.id] = c));
+    return { all, find: (id) => byId[id], findByName: (name) => all.find((c) => c.name === name), invalidate() {} };
+  },
+  touchRecent() {},
+  logClick(label) {
+    clickLog.push('▸ ' + label);
+  },
+  logExecution() {},
+  savePanelConfig() {},
+  openConfigFile() {},
+  revealConfigFile() {},
+  runCommandById(id, cmd) {
+    return QP.QuickPanelPlugin.prototype.runCommandById.call(
+      { app: clickApp, registry: null, commandRegistry: clickHost.commandRegistry, logExecution() {}, execLog: [] },
+      id,
+      cmd
+    );
+  },
+  reopen() {},
+};
+
+function clickCell(label) {
+  clickLog.length = 0;
+  noticeSink.items.length = 0;
+  noticeSink.record = true;
+  const modal = new QP.QuickPanelModal(clickApp, clickHost, QP.normalizePanelConfig({
+    version: 2,
+    panel: { showSearch: false, showRecent: false },
+    items: [
+      { type: 'command', id: 'app:open-settings', label: '设置' },
+      { type: 'command', id: 'global-search:open', label: '搜索' },
+      { type: 'command', id: 'demo:editor-only', label: '需要编辑器' },
+      { type: 'file', path: '1 Obsidian/页面/Home.md', label: '首页' },
+      { type: 'file', path: '没了.md', label: '失效文件' },
+    ],
+    recent: [],
+  }), {});
+  modal.modalEl = new FakeElement('div');
+  modal.modalEl.addClass('modal-container');
+  modal.modalEl.addClass('quick-panel');
+  modal.contentEl = new FakeElement('div');
+  modal.modalEl.appendChild(modal.contentEl);
+  modal.scope = { register() {} };
+  modal.registerDomEvent = () => {};
+  modal.onOpen();
+  const cells = modal.contentEl.querySelectorAll('qp-cell');
+  const target = cells.find((c) => c.getText().indexOf(label) >= 0);
+  if (!target) return { found: false };
+  target.click();
+  const execLog = clickLog.filter((x) => x.charAt(0) !== '▸');
+  return { found: true, log: execLog, all: clickLog.slice(), notices: clickNoticeItems(), closed: modal.closed, cell: target };
+}
+
+/** 只有 pointerup、没有 click（模拟 click 事件没送达的真机情况） */
+function pointerUpCell(label) {
+  clickLog.length = 0;
+  noticeSink.items.length = 0;
+  noticeSink.record = true;
+  const modal = new QP.QuickPanelModal(clickApp, clickHost, QP.normalizePanelConfig({
+    version: 2,
+    panel: { showSearch: false, showRecent: false },
+    items: [{ type: 'command', id: 'app:open-settings', label: '设置' }],
+    recent: [],
+  }), {});
+  modal.modalEl = new FakeElement('div');
+  modal.modalEl.addClass('modal-container');
+  modal.modalEl.addClass('quick-panel');
+  modal.contentEl = new FakeElement('div');
+  modal.modalEl.appendChild(modal.contentEl);
+  modal.scope = { register() {} };
+  modal.registerDomEvent = () => {};
+  modal.onOpen();
+  const cell = modal.contentEl.querySelectorAll('qp-cell')[0];
+  cell.fire('pointerup');
+  return { log: clickLog.filter((x) => x.charAt(0) !== '▸'), notices: clickNoticeItems() };
+}
+
+function clickNoticeItems() {
+  return noticeSink.items.slice();
+}
+
+try {
+  const a = clickCell('设置');
+  eq(a.found, true, '找到「设置」格子');
+  ok(a.log.indexOf('app:open-settings') >= 0, '点一下 → executeCommandById 真的被调用（这是用户报告"没反应"的那条链路）');
+  ok(a.closed > 0 || a.log.length > 0, '点击后要么执行命令、要么关面板（不能两者都没发生）');
+
+  const b = clickCell('搜索');
+  ok(b.log.indexOf('global-search:open') >= 0, 'checkCallback 型命令同样会被调用');
+
+  const c = clickCell('需要编辑器');
+  eq(c.log.length, 0, '需要活动编辑器、而当前没有编辑器 → 不调用命令');
+  ok(c.notices.join(' ').indexOf('打开一个笔记') >= 0, '这种情况给出明确提示而不是静默：' + JSON.stringify(c.notices));
+
+  const d = clickCell('首页');
+  ok(d.log.length === 0, '文件项不走命令执行（走 openFile）');
+
+  const e = clickCell('失效文件');
+  ok(e.notices.join(' ').indexOf('找不到这个文件') >= 0, '失效文件点击给出明确提示：' + JSON.stringify(e.notices));
+
+  // 点击日志：区分"点击没到面板"与"命令没跑"（真机排查用，写进诊断文件）
+  const f = clickCell('设置');
+  ok(f.all.join(' ').indexOf('▸ 点击 设置') >= 0, '每次点击都留一条日志（▸ 前缀），进诊断文件');
+
+  /* click 没送达、只有 pointerup 的情况（真机"点了没反应"的兜底） */
+  const g = pointerUpCell('设置');
+  ok(g.log.indexOf('app:open-settings') >= 0, '只有 pointerup（没有 click）时命令同样会被执行');
+
+  /* 同一次点击里 pointerup + click 都到达 → 只执行一次 */
+  const h = clickCell('设置');
+  h.cell.fire('pointerup');
+  eq(h.log.filter((x) => x === 'app:open-settings').length, 1, 'pointerup 与 click 都到达时只执行一次（400ms 去重）');
+} catch (err) {
+  ok(false, '点击链路用例抛异常：' + (err && err.message));
+}
+
+/* 执行器自身的语义（照 obsidian.asar：返回值不可靠、异常被吞） */
+try {
+  const fakePlugin = {
+    app: { workspace: { activeEditor: null }, commands: clickApp.commands },
+    commandRegistry: clickHost.commandRegistry,
+    logExecution() {},
+    execLog: [],
+  };
+  const run = (id) => QP.QuickPanelPlugin.prototype.runCommandById.call(fakePlugin, id);
+  clickLog.length = 0;
+  eq(run('app:open-settings'), true, '正常的 callback 命令 → 返回 true');
+  eq(clickLog, ['app:open-settings'], '确实调用了 executeCommandById');
+  clickLog.length = 0;
+  eq(run('不存在的命令'), false, '注册表里没有的命令 → 返回 false');
+  eq(clickLog.length, 0, '注册表里没有的命令不会去调用');
+  clickLog.length = 0;
+  eq(run('demo:throws'), true, '命令内部抛错时（官方会吞掉）也要如实告诉调用方"已尝试执行"');
+  eq(clickLog, ['demo:throws'], '抛错的命令确实被调用过');
+} catch (err) {
+  ok(false, '执行器语义用例抛异常：' + (err && err.message));
 }
 
 /* ============ 结果 ============ */

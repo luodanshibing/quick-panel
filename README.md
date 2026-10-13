@@ -2,15 +2,13 @@
 
 An icon grid that one hotkey away — pin the commands and notes you actually use onto a panel that appears where your mouse is, so you don't have to memorise hotkeys or type search queries.
 
-> Status: **v0.1.6 — batch 1 of 3 (panel + execute + icons)**. Working today: the panel, keyboard/mouse execution, icons from three sources, live config file, broken-item detection. Coming next: add-a-tile from inside the panel, tile context menu, file/folder tiles, import/export. See *Roadmap* below.
+> Status: **v0.1.7 — batch 1 of 3 (panel + execute + icons)**. Working today: the panel, keyboard/mouse execution, icons from three sources, live config file, broken-item detection. Coming next: add-a-tile from inside the panel, tile context menu, file/folder tiles, import/export. See *Roadmap* below.
 >
-> **v0.1.6 — clicking a tile now really runs the command, and the panel was stripped down.**
-> *Execute path (the actual bug):* `app.commands.executeCommandById(id)` returns through an internal helper that does **not** return the command's own result — for `checkCallback`/`editorCallback` commands you can get `undefined`/a Promise even when nothing ran, and exceptions inside a command are swallowed into `console.error`. So the old `if (!ok) Notice(...)` check was worthless: tiles silently did nothing. The panel now verifies the command is still registered before/after, `await`s the returned value so a rejected Promise becomes a Notice, pre-checks commands that require an open note, and treats a second click within 1.2 s as "this command did not run" and says so. The starter tiles were also replaced with core commands verified to exist (`app:open-settings`, `global-search:open`, `switcher:open`, `backlink:open`, `workspace:new-tab`, `app:reload`) — the old `graph:open` / `app:go-back` / `app:go-forward` are context-dependent and did nothing when unavailable. Existing v1 configs are upgraded to v2 automatically (user-added tiles are preserved).
-> *Less UI:* removed the "6 格 · N 项待处理" counter, removed the in-panel filter box by default (`panel.showSearch`, off by default — you can just type when the panel is open), removed the hint line at the bottom, and removed the second ×. What is left: title, one ⋯ and one ×, the grid, and a status line that appears **only** when something needs your attention.
+> **v0.1.7** — tiles now also fire on `pointerup`, not only `click` (with 400 ms de-duplication), because `click` is not delivered when an element is re-rendered/re-attached between mousedown and mouseup. Every tile press is also written to the diagnostic log (`▸ 点击 …`), so if a tile ever does nothing again the diagnostic file distinguishes "the click never reached the panel" from "the command did not run". The duplicate × is now really gone: the native close button lives in `.modal-container` (not inside `.modal`), so the old descendant selector never matched — the rule is now `.modal-container.quick-panel > .modal-close-button { display: none !important }`, verified by rendering both buttons in the headless-Edge preview. The leftover `showSearch: true` in existing configs is cleared on load.
 >
-> **v0.1.5 — centering is pure CSS** (`display:flex; align-items:center; justify-content:center` on the modal container, card `position: relative`). No JavaScript measurement, no `transform`, no resize listener: this is how Obsidian's own modals are centered, so it is immune to DPI and window-layout differences. `tools/visual-check.mjs` renders the real `styles.css` against a stand-in DOM and screenshots it with headless Edge.
+> **v0.1.6** fixed the real execute-path bug: `app.commands.executeCommandById(id)` returns through an internal helper that **does not** return the command's own result, and exceptions inside a command are swallowed — so the old `if (!ok)` check was worthless and tiles silently did nothing. It also removed the counter, the in-panel filter box (now off by default), the hint line and the extra ×.
 >
-> **v0.1.4** removed drag-to-move and all mouse tracking; **v0.1.3** renamed the panel to **快捷面板** and renamed your config file automatically (`快接面板.json` → `快捷面板.json`, content untouched); **v0.1.1** fixed the container losing its viewport size. If the panel ever looks wrong, run **导出面板诊断（排查显示问题用）** — it writes the real geometry to `.quick-panel-diag.txt` in the vault root.
+> **v0.1.5** made centering pure CSS; **v0.1.4** removed drag and mouse tracking; **v0.1.3** renamed the panel to **快捷面板** and renamed your config file automatically; **v0.1.1** fixed the container losing its viewport size. If anything looks wrong, run **导出面板诊断（排查显示问题用）** — it writes the real geometry and the click/execute log to `.quick-panel-diag.txt` in the vault root.
 
 ## What it is
 
@@ -121,15 +119,13 @@ MIT — see [LICENSE](LICENSE).
 
 一个快捷键呼出的**图标网格面板**：把你真正在用的命令、笔记、文件夹钉在眼前，不用记快捷键，也不用打字搜索。
 
-> 状态：**v0.1.6 —— 三批里的第 1 批（面板 + 执行 + 图标）**。现在能用的：面板本体、键盘/鼠标执行、三种图标来源、库内配置文件实时生效、失效项检测。下一批：面板内即时添加、格子右键菜单；再下一批：文件/文件夹项打磨与导入导出。
+> 状态：**v0.1.7 —— 三批里的第 1 批（面板 + 执行 + 图标）**。现在能用的：面板本体、键盘/鼠标执行、三种图标来源、库内配置文件实时生效、失效项检测。下一批：面板内即时添加、格子右键菜单；再下一批：文件/文件夹项打磨与导入导出。
 >
-> **v0.1.6 —— 点格子现在真能执行了，界面也砍干净了。**
-> *执行链（真 bug）*：`app.commands.executeCommandById(id)` 走的是官方内部辅助函数，**它不返回命令自身的执行结果** —— 对 `checkCallback`/`editorCallback` 类命令，即使什么也没跑也可能拿到 `undefined`/Promise，而命令内部抛错是被 `console.error` 吞掉的。所以我原来那句 `if (!ok) Notice(...)` 等于没校验，格子就"点了没反应"。现在：执行前后都校验命令是否在注册表；`await` 返回值让被拒的 Promise 变成可见提示；需要活动编辑器的命令先给出明确提示；**同一条命令 1.2 秒内再点一次**会被判定为"确实没跑起来"，明确告诉你改用 Ctrl+P 执行或右键重新绑定。默认格子也换成核验过存在的核心命令（`app:open-settings` / `global-search:open` / `switcher:open` / `backlink:open` / `workspace:new-tab` / `app:reload`）—— 旧的 `graph:open` / `app:go-back` / `app:go-forward` 依赖上下文，不可用时就是没反应。你原有的 v1 配置会**自动升级到 v2**（你自己加的格子原样保留）。
-> *界面精简*：删掉"6 格 · N 项待处理"计数、默认不再显示面板内过滤框（`panel.showSearch`，默认关 —— 打开面板直接打字就能过滤）、删掉底部操作提示小字、删掉多余的第二个 ×。现在只剩：标题 + 一个 ⋯ + 一个 × + 网格，以及**只在真有问题时才出现**的一行状态。
+> **v0.1.7** —— 格子除了 `click` 还会响应 `pointerup`（400ms 去重），因为元素在 mousedown 与 mouseup 之间被重绘/重挂时浏览器**不会补发 `click`**。每次点格子都会写一条 `▸ 点击 …` 到诊断日志：以后再出现"点了没反应"，诊断文件能直接区分"点击没到面板"和"命令没跑"。**两个 × 这次真的修掉了**：原生关闭按钮在 `.modal-container` 里（不在 `.modal` 里），旧的后代选择器根本没命中；现在的规则是 `.modal-container.quick-panel > .modal-close-button { display: none !important }`，并用无头 Edge 把两个按钮都渲染出来验证过只剩下一个。老配置里残留的 `showSearch: true` 也在加载时就地清掉。
 >
-> **v0.1.5 —— 居中改由纯 CSS 负责**（容器 `display:flex + align-items/justify-content: center`，卡片 `position: relative`）。JS 不参与定位、不写 `transform`、不挂 resize 监听：这就是 Obsidian 自己弹窗的居中方式，因此不受 DPI 与窗口布局影响。`tools/visual-check.mjs` 会用**真实 styles.css** 拼等价 DOM 并无头 Edge 截图。
+> **v0.1.6** 修的是真正的执行链 bug：`app.commands.executeCommandById(id)` 走官方内部辅助函数、**不返回命令自身的执行结果**，命令内部报错还被吞掉 —— 所以我原来那句 `if (!ok)` 等于没校验，格子就"点了没反应"。同时删掉了计数、面板内过滤框（默认关）、底部提示小字与多余的 ×。
 >
-> **v0.1.4** 删掉了拖拽与整套鼠标跟踪；**v0.1.3** 把面板名改成 **快捷面板** 并自动改配置文件名（`快接面板.json` → `快捷面板.json`，内容一字不改）；**v0.1.1** 修了容器丢视口尺寸。若显示仍不对，跑命令 **导出面板诊断（排查显示问题用）**，它会把真实几何写进库根 `.quick-panel-diag.txt`。
+> **v0.1.5** 居中改为纯 CSS；**v0.1.4** 删掉拖拽与鼠标跟踪；**v0.1.3** 面板改名 **快捷面板** 并自动改配置文件名；**v0.1.1** 修容器丢视口尺寸。有异常就跑命令 **导出面板诊断（排查显示问题用）**，它会把真实几何与点击/执行日志写进库根 `.quick-panel-diag.txt`。
 
 ## 它是什么
 
