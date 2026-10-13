@@ -64,11 +64,13 @@
 }
 
 /*
- * 隐藏 Obsidian 自带的关闭按钮（用户反馈"为什么有两个 ×"）。
- * ⚠️ 它在 .modal-container 里、**不是 .modal 的子元素** —— 用 `.quick-panel .modal-close-button`
- * 这种后代选择器根本不命中（v0.1.6 就是这么漏的）。
+ * 隐藏 Obsidian 自带的关闭按钮（用户要求"把所有 × 都去掉"）。
+ * ⚠️ 层级依据（2026-10-13 从 obsidian.asar 读到创建代码，我先后判断错过一次）：
+ *     this.closeButtonEl = this.modalEl.createDiv("modal-close-button mod-raised")
+ *   → 它是 **.modal 的子元素**，所以必须用后代选择器；
+ *   写成 `.modal-container.quick-panel > .modal-close-button` 会打偏（`>` 指向的是另一处实现）。
  */
-.modal-container.quick-panel > .modal-close-button {
+.quick-panel .modal .modal-close-button {
   display: none !important;
 }
 

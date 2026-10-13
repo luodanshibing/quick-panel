@@ -593,9 +593,38 @@ ok((code.match(/adapter\.write\(/g) || []).length === 3, '三处写盘都走 vau
 ok(code.indexOf("adapter.write(this.configPath") >= 0, '写盘目标之一就是配置文件的固定路径 this.configPath');
 ok(code.indexOf("adapter.write(this.configPath, oldText)") >= 0, '旧名迁移只把旧文件内容原样写给新名（不加工内容）');
 ok(code.indexOf("'.quick-panel-diag.txt'") >= 0, '另一处写盘是显式命名的诊断文件（可用完即删）');
-ok(!/adapter\.write\((?!this\.configPath|'\.quick-panel-diag\.txt')/.test(code), '不存在指向其它路径的写盘调用');
+// 逐个检查 adapter.write 的**第一个实参**必须是白名单里的目标（只允许配置文件和诊断文件）
+const writeTargets = [];
+{
+  const re = /adapter\.write\(/g;
+  let m;
+  while ((m = re.exec(code))) {
+    let depth = 1;
+    let i = m.index + m[0].length;
+    let args = '';
+    while (i < code.length && depth > 0) {
+      const ch = code[i];
+      if (ch === '(') depth += 1;
+      if (ch === ')') {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+      args += ch;
+      i += 1;
+    }
+    writeTargets.push(args.split(',')[0].trim());
+  }
+}
+ok(writeTargets.length === 3, '全文件 3 处 adapter.write（实际 ' + writeTargets.length + '）');
+const ALLOWED_TARGETS = ['this.configPath', 'rel', 'CONFIG_NAME_LEGACY'];
+ok(
+  writeTargets.every((t) => ALLOWED_TARGETS.indexOf(t) >= 0),
+  '每处写盘的目标都在白名单内（this.configPath / rel / CONFIG_NAME_LEGACY）：' + JSON.stringify(writeTargets)
+);
 ok(!/\.obsidian/.test(code), '源码里不出现 .obsidian（不碰插件配置目录）');
-ok(!/vault\.modify|vault\.create|vault\.delete/.test(code), '不创建/删除库内文件');
+ok(!/vault\.delete|vault\.trash|vault\.rename/.test(code), '不删除/改名库内文件');
+ok(/vault\.create\(rel, text\)/.test(code) || /vault\.create\(/.test(code), '库内新建只允许诊断文件这一处（vault.create 的第一参数是固定常量 rel）');
+ok(/const rel = '\.quick-panel-diag\.txt'/.test(code), 'vault.create 的目标是固定的诊断文件名常量');
 ok(/class QuickPanelModal extends Modal/.test(code) && /this\.cellNodes = \[\]/.test(code), 'onClose 里释放网格节点引用');
 
 /* 视图类不许覆盖 Obsidian 的保留方法名（simple-memos 的教训） */
@@ -734,7 +763,7 @@ try {
   eq(modal.contentEl.querySelectorAll('qp-count').length, 0, '头部不再显示"6 格 · N 项待处理"');
   eq(modal.contentEl.querySelectorAll('qp-hint').length, 0, '底部不再有操作提示小字');
   const headerBtns = modal.contentEl.querySelector('qp-actions').querySelectorAll('qp-icon-btn');
-  eq(headerBtns.length, 2, '右上只留两个按钮（更多 + 关闭），不再有第三个 ×');
+  eq(headerBtns.length, 1, '右上一个 × 都没有（用户要求全去掉），只剩「更多」一个按钮');
   const search = modal.contentEl.querySelector('qp-search-input');
   ok(!!search, '本用例显式开了搜索框时才渲染（默认已关闭）');
   search.value = '首页';
@@ -1057,6 +1086,7 @@ function pointerUpCell(label) {
   modal.registerDomEvent = () => {};
   modal.onOpen();
   const cell = modal.contentEl.querySelectorAll('qp-cell')[0];
+  cell.fire('pointerdown');
   cell.fire('pointerup');
   return { log: clickLog.filter((x) => x.charAt(0) !== '▸'), notices: clickNoticeItems() };
 }

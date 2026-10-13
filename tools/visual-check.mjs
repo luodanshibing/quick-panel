@@ -91,16 +91,14 @@ const html = `<!doctype html>
 <body>
   <div class="modal-container quick-panel" style="--qp-width: 500px">
     <div class="modal-bg"></div>
-    <!-- Obsidian 原生关闭按钮：在 .modal-container 里，不在 .modal 里（历史上就是它没被隐藏） -->
-    <button class="modal-close-button" aria-label="关闭">×</button>
     <div class="modal">
+      <button class="modal-close-button" aria-label="关闭">×</button>
       <div class="modal-close-button">×</div>
       <div class="modal-content">
         <div class="qp-header">
           <div class="qp-title"><span class="qp-title-text">快捷面板</span></div>
           <div class="qp-actions">
             <button class="qp-icon-btn" type="button">⋯</button>
-            <button class="qp-icon-btn" type="button">×</button>
           </div>
         </div>
         <div class="qp-grid" style="--qp-cols: 6; --qp-cell: 40px">${grid}

@@ -592,16 +592,13 @@ class QuickPanelModal extends Modal {
     const title = header.createDiv({ cls: 'qp-title' });
     title.createSpan({ cls: 'qp-title-text', text: '快捷面板' });
 
-    // 只留一个 ×（用户指出的"两个叉"：另一个是 Obsidian 弹窗原生关闭按钮，已在 CSS 里隐藏）
+    // 用户 2026-10-13 要求："把所有 × 都去掉" → 这里不再放关闭按钮，
+    // 自带的那个也在 CSS 里隐藏了。关闭方式：Esc、点面板外任意处（Obsidian 弹窗标准行为）。
     const actions = header.createDiv({ cls: 'qp-actions' });
     const menuBtn = actions.createEl('button', { cls: 'qp-icon-btn', attr: { type: 'button' } });
     setIcon(menuBtn, 'more-horizontal');
     menuBtn.setAttribute('aria-label', '更多');
     menuBtn.addEventListener('click', (evt) => this.openMoreMenu(evt));
-    const closeBtn = actions.createEl('button', { cls: 'qp-icon-btn', attr: { type: 'button' } });
-    setIcon(closeBtn, 'x');
-    closeBtn.setAttribute('aria-label', '关闭');
-    closeBtn.addEventListener('click', () => this.close());
   }
 
   buildSearch() {
@@ -727,21 +724,36 @@ class QuickPanelModal extends Modal {
   }
 
   /**
-   * 给一个元素绑定"按下即执行"。
+   * 给一个格子绑定激活。**按下 + 松开**即执行（不依赖 click）。
    *
-   * 为什么要两条事件：真机反馈"点了没反应"，而离线复现证明 click 处理器一切正常 ——
-   * 那么剩下的可能是 click 事件没送达（元素在 mousedown/mouseup 之间被重绘或重挂时，
-   * 浏览器不会补发 click）。`pointerup` 在鼠标松开时就会到，比 click 更早也更可靠；
-   * 两者都接，用 400ms 去重保证只执行一次。
+   * 为什么不用 click（真机三次反馈"点了没反应"，而离线复现证明 click 处理器完全正常）：
+   *   click 只有在 mousedown 与 mouseup 落在同一元素上、且元素没被重绘/重挂时才补发；
+   *   弹窗里一旦有别的插件/主题在 mousedown 阶段动了 DOM，click 就丢了。
+   *   → 改为「pointerdown 记下按在哪个元素、pointerup 若还在同一元素就执行」，另外仍保留 click
+   *     作为键盘/程序化触发的兜底，用 600ms 去重避免重复执行。
    */
   bindActivate(el, run) {
+    let armed = false;
     const fire = () => {
       const now = Date.now();
-      if (this._lastActivate && now - this._lastActivate < 400) return;
+      if (this._lastActivate && now - this._lastActivate < 600) return;
       this._lastActivate = now;
       run();
     };
-    el.addEventListener('pointerup', fire);
+    el.addEventListener('pointerdown', () => {
+      armed = true;
+    });
+    el.addEventListener('pointerup', () => {
+      if (!armed) return;
+      armed = false;
+      fire();
+    });
+    el.addEventListener('pointercancel', () => {
+      armed = false;
+    });
+    el.addEventListener('pointerleave', () => {
+      armed = false;
+    });
     el.addEventListener('click', fire);
     return el;
   }
@@ -1479,15 +1491,50 @@ class QuickPanelPlugin extends Plugin {
       new Notice('已导出诊断到库根 .quick-panel-diag.txt（' + lines.length + ' 行）');
     }
     const text = lines.join('\n') + '\n';
+    // 三重落盘：adapter → vault.create/modify → 直接 fs 写库根绝对路径。
+    // （用户反馈"诊断命令也无效、不生成文件"：单靠 adapter 有时会静默失败）
+    const rel = '.quick-panel-diag.txt';
+    let written = '';
     try {
-      await this.app.vault.adapter.write('.quick-panel-diag.txt', text);
+      await this.app.vault.adapter.write(rel, text);
+      written = 'vault.adapter';
     } catch (e) {
-      console.log(lines.join('\n'));
-      new Notice('写诊断文件失败：' + ((e && e.message) || e));
+      written = '';
+    }
+    if (!written) {
+      try {
+        const existing = this.app.vault.getAbstractFileByPath(rel);
+        if (existing) await this.app.vault.modify(existing, text);
+        else await this.app.vault.create(rel, text);
+        written = 'vault.create/modify';
+      } catch (e) {
+        written = '';
+      }
+    }
+    if (!written) {
+      try {
+        const adapter = this.app.vault.adapter;
+        const base = typeof adapter.getBasePath === 'function' ? adapter.getBasePath() : adapter.basePath;
+        if (!base) throw new Error('拿不到库的绝对路径');
+        const fs = require('fs');
+        const path = require('path');
+        fs.writeFileSync(path.join(base, rel), text, 'utf8');
+        written = 'fs.writeFileSync';
+      } catch (e) {
+        written = '';
+      }
+    }
+    if (written) {
+      new Notice('已导出诊断：库根 ' + rel + '（' + lines.length + ' 行，写入方式 ' + written + '）', 8000);
+    } else {
+      // 三条路全失败：把内容塞进控制台并留下可见提示，不静默
+      console.log('==== quick-panel 诊断 ====\n' + text);
+      new Notice('诊断文件写不进去（已打印到控制台）。请按 Ctrl+Shift+I 打开控制台复制。', 12000);
     }
   }
 
-  /** 记一笔「最近用过」：只写配置文件，且失败也不打扰用户（不影响主流程） */  touchRecent(item) {
+  /** 记一笔「最近用过」：只写配置文件，且失败也不打扰用户（不影响主流程） */
+  touchRecent(item) {
     try {
       const now = Date.now();
       const entry = { type: itemType(item), usedAt: now };
