@@ -581,6 +581,7 @@ ok(/\.qp-cell[\s\S]{0,400}box-shadow: none/.test(STYLES), '格子按钮强制清
 const fakeHost = {
   commandRegistry: () => ({ find: () => undefined, findByName: () => undefined }),
 };
+const CELL_GAP_FOR_TEST = 8; // 与 main.js 的 CELL_GAP 保持一致（改那边记得改这里）
 const proto = QP.QuickPanelModal.prototype;
 const ctx = { host: fakeHost, app: { vault: {} } };
 eq(proto.displayName.call(ctx, { type: 'command', id: 'app:reload', label: '重载' }), '重载', 'displayName 优先用 label');
@@ -779,6 +780,38 @@ try {
   nav2.setHighlight(20);
   nav2.onKeyDown({ key: 'ArrowDown', target: { tagName: 'DIV' }, preventDefault() {} });
   eq(nav2.highlight, 20, '目标行没有这一列就不动（20 已在最后一行，按下仍是 20）');
+
+  /*
+   * 定位（回归：第一次真机实测"整屏变暗但看不到面板、角上留一块白条"）
+   * 卡片尺寸固定为 800x600，视口 1200x800，EDGE_GAP=12。
+   * 期望：右下角钳到 (1200-800-12, 800-600-12) = (388, 188)，四边都不出视口。
+   */
+  const EDGE = 12;
+  function placeWith(mouse, cardW, cardH, vw = 1200, vh = 800) {
+    const holder = new QP.QuickPanelModal(fakeApp, host, QP.normalizePanelConfig({ items: [], recent: [] }), { mouse: mouse });
+    const el = new FakeElement('div');
+    el.addClass('quick-panel');
+    el.addClass('modal');
+    el.getBoundingClientRect = () => ({ left: 0, top: 0, width: cardW, height: cardH, right: cardW, bottom: cardH });
+    holder.modalEl = el;
+    window.innerWidth = vw;
+    window.innerHeight = vh;
+    holder.placeAtMouse();
+    const m = /translate\((-?\d+)px, (-?\d+)px\)/.exec(el.style.transform || '');
+    return m ? { x: Number(m[1]), y: Number(m[2]), left: el.style.left, top: el.style.top } : { x: NaN, y: NaN };
+  }
+  const far = placeWith({ x: 1195, y: 790 }, 800, 600);
+  eq(far.x, 1200 - 800 - EDGE, '鼠标贴右下角时，面板左边钳到视口内（不出右边界）');
+  eq(far.y, 800 - 600 - EDGE, '鼠标贴右下角时，面板上边钳到视口内（**底边不再溢出**，这正是白条的成因）');
+  eq(far.x + 800 <= 1200 - EDGE, true, '钳位后整块面板都在视口右边界内');
+  eq(far.y + 600 <= 800 - EDGE, true, '钳位后整块面板都在视口下边界内');
+  const near = placeWith({ x: 200, y: 150 }, 800, 600);
+  eq(near.x, 200 + CELL_GAP_FOR_TEST, '鼠标在中间时，面板出现在鼠标右下方一点');
+  eq(near.y, 150 + CELL_GAP_FOR_TEST, '纵坐标同理');
+  eq(near.left, '0px', '定位偏移只用 transform，left/top 固定为 0（量到的宽度才是真宽度）');
+  eq(near.top, '0px', 'top 同理');
+  const tinyViewport = placeWith({ x: 300, y: 300 }, 900, 700, 800, 600);
+  ok(tinyViewport.x >= EDGE && tinyViewport.y >= EDGE, '面板比视口还大时也至少保证左上角在视口内（不出现负坐标把标题挤出去）');
 } catch (e) {
   ok(false, '面板渲染冒烟抛异常：' + (e && e.stack ? e.stack.split('\n').slice(0, 3).join(' | ') : e));
 }
