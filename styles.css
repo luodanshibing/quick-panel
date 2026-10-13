@@ -369,6 +369,32 @@
   white-space: nowrap;
 }
 
+/* ---------- 设置面板 ---------- */
+
+.modal-container.qp-settings .modal {
+  width: min(520px, calc(100vw - 32px));
+}
+
+.qp-settings .modal-content {
+  padding: 14px 16px 10px;
+}
+
+.qp-settings .setting-item {
+  padding: 8px 0;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.qp-settings .setting-item:first-of-type {
+  border-top: none;
+}
+
+.qp-settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
 /* ---------- 添加格子选择器（命令 / 笔记 / 文件夹） ---------- */
 
 .qp-picker .modal {

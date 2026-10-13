@@ -22,6 +22,7 @@ const {
   Notice,
   Menu,
   SuggestModal,
+  Setting,
   setIcon,
   getIconIds,
 } = require('obsidian');
@@ -1250,7 +1251,7 @@ class QuickPanelModal extends Modal {
       menu.addSeparator();
       menu.addItem((i) =>
         i
-          .setTitle('这条命令已失效 —— 重新绑定到同名命令')
+          .setTitle('重新绑定到同名命令')
           .setIcon('link')
           .onClick(() => {
             const snapshot = cleanLabel(item.nameSnapshot) || cleanLabel(item.label) || asString(item.id);
@@ -1267,7 +1268,7 @@ class QuickPanelModal extends Modal {
     }
     menu.addSeparator();
     menu.addItem((i) =>
-      i.setTitle('打开配置文件（快捷面板.json）').setIcon('file-text').onClick(() => this.host.openConfigFile())
+      i.setTitle('打开配置文件').setIcon('file-text').onClick(() => this.host.openConfigFile())
     );
     menu.showAtMouseEvent(evt);
   }
@@ -1290,43 +1291,62 @@ class QuickPanelModal extends Modal {
     modal.open();
   }
 
-  /** 换图标：填 Lucide 名 / emoji / 库内图片路径；带全量图标名建议 */
+  /**
+   * 换图标：一个输入框 + 常用图标名提示。
+   *
+   * ⚠️ v0.4.3 之前这里用 `SuggestModal` 并调了 `this.setPlaceholder(...)` —— 那是 `InputSuggest`
+   *   的方法，`SuggestModal` 上不存在 → 抛异常，"换图标"点了毫无反应。现已改为普通输入框弹窗
+   *   （与"改名"同一条已验证的路径），并把图标名候选放进提示与建议按钮里。
+   */
   promptIcon(item) {
     const self = this;
-    const modal = new IconSuggestModal(this.app, modalIconCandidates(this.host.iconNames()), (value) => {
-      self.host.updateItem(item, { icon: value });
-      new Notice('已改图标：' + value);
-      self.host.reopen();
-    });
-    modal.setPlaceholder('图标名 / emoji / 库内图片路径（如 logo.png）');
+    const current = asString(item.icon).trim();
+    const names = modalIconCandidates(this.host.iconNames());
+    const quick = names.slice(0, 6);
+    const modal = new ConfirmLikeModal(
+      this.app,
+      '换图标',
+      [
+        { label: '填 Lucide 图标名（如 settings、folder-open）、emoji（如 🚩）或库内图片路径（如 logo.png）', muted: true },
+        { label: '常用：' + quick.join('、'), muted: true },
+      ],
+      [
+        {
+          label: '保存',
+          onClick: function () {
+            const value = modal.getInputValue();
+            self.host.updateItem(item, { icon: value });
+            new Notice(cleanLabel(value) ? '已改图标：' + value : '已清空图标（回退默认图标）');
+            self.host.reopen();
+          },
+        },
+        {
+          label: '用默认图标',
+          onClick: function () {
+            self.host.updateItem(item, { icon: '' });
+            new Notice('已清空图标（回退默认图标）');
+            self.host.reopen();
+          },
+        },
+      ]
+    );
+    modal.addInput({ value: current, placeholder: '图标名 / emoji / 图片路径' });
     modal.open();
   }
 
+  /** 「更多」菜单：只留必要项，说明性括号全部去掉（用户 2026-10-14：不做冗余文案） */
   openMoreMenu(evt) {
     const menu = new Menu();
     menu.addItem((i) =>
-      i.setTitle('打开配置文件（快捷面板.json）').setIcon('file-text').onClick(() => this.host.openConfigFile())
-    );
-    menu.addItem((i) =>
-      i.setTitle('在文件浏览器中定位配置文件').setIcon('folder').onClick(() => this.host.revealConfigFile())
+      i.setTitle('设置').setIcon('settings').onClick(() => {
+        this.silentClose();
+        this.host.openSettings();
+      })
     );
     menu.addSeparator();
-    menu.addItem((i) =>
-      i.setTitle('重新加载面板').setIcon('refresh-cw').onClick(() => this.host.reopen())
-    );
-    menu.addItem((i) =>
-      i
-        .setTitle(this.config.panel.showRecent ? '关闭「最近用过」（直接改 JSON 生效）' : '开启「最近用过」（直接改 JSON 生效）')
-        .setIcon('clock')
-        .onClick(() => {
-          this.config.panel.showRecent = !this.config.panel.showRecent;
-          this.host.savePanelConfig(this.config);
-          this.host.reopen();
-          this.silentClose();
-        })
-    );
-    if (evt && evt.clientX !== undefined) menu.showAtMouseEvent(evt);
-    else menu.showAtPosition({ x: (this.view || window).innerWidth / 2, y: 80 });
+    menu.addItem((i) => i.setTitle('打开配置文件').setIcon('file-text').onClick(() => this.host.openConfigFile()));
+    menu.addItem((i) => i.setTitle('在文件浏览器中定位配置文件').setIcon('folder').onClick(() => this.host.revealConfigFile()));
+    menu.showAtMouseEvent(evt);
   }
 
   /* ---- 视图 ---- */
@@ -1407,8 +1427,9 @@ class ConfirmLikeModal extends Modal {
 }
 
 /**
- * 图标建议弹窗：一个输入框 + 实时过滤的建议列表。
- * 候选来自运行期 `getIconIds()`（本机实测是顶层导出），拿不到时退化成内置清单。
+ * 图标建议弹窗（保留：`getSuggestions` 那条 Obsidian 会自己调，不需要额外的方法）。
+ * ⚠️ 不要在这里调用 `this.setPlaceholder(...)`：那是 `InputSuggest` 的方法，`SuggestModal` 上没有，
+ *    调了会抛异常 —— 这正是 v0.4.3 之前"换图标点了没反应"的原因。现在换图标走的是输入框弹窗。
  */
 class IconSuggestModal extends SuggestModal {
   constructor(app, candidates, onChoose) {
@@ -1463,6 +1484,115 @@ function modalIconCandidates(runtimeNames) {
   if (Array.isArray(runtimeNames)) runtimeNames.forEach(push);
   LUCIDE_CANDIDATES.forEach(push);
   return out.sort();
+}
+
+/**
+ * 设置面板（用户 2026-10-14 要求："增加设置面板，可以做个性化选择"）。
+ *
+ * 用普通 Modal 而不是 PluginSettingTab：这样从面板的 ⋯ →「设置」直接打开，不用去 Obsidian 设置页翻。
+ * 每改一项都立即写入配置并让面板生效（关掉设置后重开面板）。
+ */
+class QuickPanelSettingsModal extends Modal {
+  constructor(app, plugin) {
+    super(app);
+    this.plugin = plugin;
+  }
+
+  onOpen() {
+    this.modalEl.addClass('quick-panel');
+    this.modalEl.addClass('qp-settings');
+    if (this.titleEl && this.titleEl.parentElement) this.titleEl.parentElement.hide();
+    else if (this.titleEl && this.titleEl.hide) this.titleEl.hide();
+    this.contentEl.createDiv({ cls: 'qp-confirm-title', text: '快捷面板设置' });
+    this.render();
+  }
+
+  onClose() {
+    this.contentEl.empty();
+    this.plugin.reopen();
+  }
+
+  render() {
+    this.contentEl.empty();
+    this.contentEl.createDiv({ cls: 'qp-confirm-title', text: '快捷面板设置' });
+    let panel = this.plugin.config.panel;
+    const write = (patch) => {
+      panel = Object.assign({}, panel, patch);
+      const next = normalizePanelConfig({
+        version: CONFIG_VERSION,
+        panel: panel,
+        items: this.plugin.config.items,
+        recent: this.plugin.config.recent,
+      });
+      this.plugin.config = next;
+      this.plugin.writePanelConfig(next, { silent: true });
+      this.render();
+    };
+
+    new Setting(this.contentEl)
+      .setName('显示「最近用过」')
+      .setDesc('面板底部一行，显示最近执行过的命令')
+      .addToggle((t) =>
+        t.setValue(!!panel.showRecent).onChange((v) => {
+          write({ showRecent: !!v });
+        })
+      );
+    new Setting(this.contentEl)
+      .setName('显示过滤框')
+      .setDesc('面板里本来就可以直接打字过滤，默认关掉更清爽')
+      .addToggle((t) =>
+        t.setValue(!!panel.showSearch).onChange((v) => {
+          write({ showSearch: !!v });
+        })
+      );
+    new Setting(this.contentEl)
+      .setName('格子大小')
+      .setDesc('图标格子的边长（像素）')
+      .addSlider((s) =>
+        s
+          .setLimits(24, 72, 4)
+          .setValue(panel.iconSize)
+          .setDynamicTooltip()
+          .onChange((v) => {
+            write({ iconSize: v });
+          })
+      );
+    new Setting(this.contentEl)
+      .setName('每行列数')
+      .setDesc('自动 = 按窗口宽度自适应')
+      .addDropdown((d) =>
+        d
+          .addOption('auto', '自动')
+          .addOption('4', '4 列')
+          .addOption('5', '5 列')
+          .addOption('6', '6 列')
+          .addOption('8', '8 列')
+          .setValue(String(panel.columns))
+          .onChange((v) => {
+            write({ columns: v === 'auto' ? 'auto' : Number(v) });
+          })
+      );
+
+    const foot = this.contentEl.createDiv({ cls: 'qp-settings-actions' });
+    const openBtn = foot.createEl('button', { cls: 'qp-btn is-ghost', attr: { type: 'button' } });
+    openBtn.setText('打开配置文件');
+    openBtn.addEventListener('click', () => this.plugin.openConfigFile());
+    const resetBtn = foot.createEl('button', { cls: 'qp-btn is-ghost', attr: { type: 'button' } });
+    resetBtn.setText('恢复默认显示设置');
+    resetBtn.addEventListener('click', () => {
+      const defaults = normalizePanelSettings(null);
+      const next = normalizePanelConfig({
+        version: CONFIG_VERSION,
+        panel: defaults,
+        items: this.plugin.config.items,
+        recent: this.plugin.config.recent,
+      });
+      this.plugin.config = next;
+      this.plugin.writePanelConfig(next, { silent: true });
+      new Notice('显示设置已恢复默认（格子内容不动）');
+      this.render();
+    });
+  }
 }
 
 const DEFAULT_ICON = 'file-text';
@@ -2162,6 +2292,11 @@ class QuickPanelPlugin extends Plugin {
     picker.open();
   }
 
+  /** 打开设置面板（从面板的 ⋯ → 设置进入） */
+  openSettings() {
+    new QuickPanelSettingsModal(this.app, this).open();
+  }
+
   /** 图标候选（运行期全量优先） */
   iconNames() {
     try {
@@ -2246,4 +2381,5 @@ module.exports.filterPickerItems = filterPickerItems;
 module.exports.modalIconCandidates = modalIconCandidates;
 module.exports.QuickPanelPickerModal = QuickPanelPickerModal;
 module.exports.IconSuggestModal = IconSuggestModal;
+module.exports.QuickPanelSettingsModal = QuickPanelSettingsModal;
 module.exports.ConfirmLikeModal = ConfirmLikeModal;

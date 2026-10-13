@@ -256,10 +256,78 @@ class StubPlugin {
   registerEvent() {}
 }
 
+/** Setting 的链式桩：每个方法返回自身，回调不自动触发（由测试显式调用） */
+const settingInstances = [];
+class StubSetting {
+  constructor(containerEl) {
+    this.containerEl = containerEl;
+    this.components = [];
+    settingInstances.push(this);
+  }
+  setName() {
+    return this;
+  }
+  setDesc() {
+    return this;
+  }
+  setHeading() {
+    return this;
+  }
+  addToggle(cb) {
+    this.components.push(
+      cb({
+        setValue() {
+          return this;
+        },
+        onChange() {
+          return this;
+        },
+      })
+    );
+    return this;
+  }
+  addSlider(cb) {
+    this.components.push(
+      cb({
+        setLimits() {
+          return this;
+        },
+        setValue() {
+          return this;
+        },
+        setDynamicTooltip() {
+          return this;
+        },
+        onChange() {
+          return this;
+        },
+      })
+    );
+    return this;
+  }
+  addDropdown(cb) {
+    this.components.push(
+      cb({
+        addOption() {
+          return this;
+        },
+        setValue() {
+          return this;
+        },
+        onChange() {
+          return this;
+        },
+      })
+    );
+    return this;
+  }
+}
+
 const obsidianStub = new Proxy({
   Plugin: StubPlugin,
   Modal: StubModal,
   Notice: NoticeStub,
+  Setting: StubSetting,
   Menu: class Menu {},
     setIcon() {},
     getIconIds() {
@@ -1292,7 +1360,44 @@ try {
     eq(threw, null, '两边都查不到时 runCommand 不抛异常（而不是静默崩掉）');
   }
 
-  /* 删除/添加之后必须立刻刷新面板（用户 2026-10-14 反馈：删了要手动关了再开才消失） */
+  /* 设置面板 + 换图标修复（用户 2026-10-14 反馈） */
+  {
+    ok(/new Setting\(this\.contentEl\)/.test(SOURCE), '设置面板用 Obsidian 的 Setting 组件搭（不是自绘）');
+    ok(/class QuickPanelSettingsModal extends Modal/.test(SOURCE), '设置面板存在');
+    ok(/setTitle\('设置'\)/.test(SOURCE) && /openSettings\(\)/.test(SOURCE), '面板「⋯」菜单里有「设置」入口');
+    ok(!/setPlaceholder\(/.test(stripComments(SOURCE)), '不再调用 SuggestModal 上不存在的 setPlaceholder（"换图标"点了没反应的原因）');
+    ok(/modal\.addInput\(\{ value: current, placeholder: '图标名 \/ emoji \/ 图片路径' \}\)/.test(SOURCE), '换图标改成输入框弹窗（与"改名"同一路径）');
+
+    // 设置面板能渲染、点开关能写配置
+    const writes = [];
+    const fakePlugin = {
+      config: QP.normalizePanelConfig({ version: 2, items: [], recent: [] }),
+      writePanelConfig: (cfg) => {
+        writes.push(cfg.panel);
+      },
+      reopen() {},
+      openConfigFile() {},
+    };
+    const settings = new QP.QuickPanelSettingsModal(fakeApp, fakePlugin);
+    settingInstances.length = 0;
+    settings.modalEl = new FakeElement('div');
+    settings.modalEl.addClass('modal-container');
+    settings.modalEl.addClass('quick-panel');
+    settings.contentEl = new FakeElement('div');
+    settings.modalEl.appendChild(settings.contentEl);
+    settings.titleEl = new FakeElement('div');
+    let renderErr = null;
+    try {
+      settings.onOpen();
+    } catch (e) {
+      renderErr = e;
+    }
+    eq(renderErr, null, '设置面板能打开（不抛异常）：' + (renderErr && renderErr.message));
+    ok(settings.contentEl.children.length >= 2, '设置面板渲染出标题与操作区（Setting 组件自行挂到 contentEl，实际 ' + settings.contentEl.children.length + ' 个自有节点）');
+    eq(settingInstances.length, 4, '设置面板建了 4 项设置（最近用过 / 过滤框 / 格子大小 / 每行列数），实际 ' + settingInstances.length);
+    eq(typeof settings.onClose, 'function', '设置面板关闭时会重开面板以生效');
+  }
+
   {
     ok(/removeItem\(item\)[\s\S]{0,260}reopen\(\)/.test(SOURCE), '删除动作里 removeItem 之后紧接着调用 reopen（面板当场刷新）');
     ok(/self\.addItem\(entry, insertAt\)[\s\S]{0,360}self\.reopen\(\)/.test(SOURCE), '选择器添加之后也走 reopen（统一刷新口径）');
