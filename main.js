@@ -1055,29 +1055,34 @@ class QuickPanelModal extends Modal {
 
   /* ---- 定位 ---- */
 
+  /**
+   * 把面板放在鼠标位置（右下偏移一点），并保证整块面板都在视口内。
+   *
+   * ⚠️ 上一版踩过的坑：把钳位写进 top、再让卡片自己算高度 → 卡片比预算高时底边露到屏幕外
+   * （用户实测症状：整屏变暗 + 右下角一块白条）。现在改成：
+   *   · left/top 固定为 0，位置一律用 translate 给（transform 不参与 layout，量出来的 rect 才准）；
+   *   · 先写宽度、再量一次 rect，用**量到的真实宽高**做钳位；
+   *   · 卡片本身 width/height 都是 fit-content + max-height（见 styles.css），不会比视口高。
+   */
   placeAtMouse() {
     if (!this.modalEl) return;
-    const rect = this.modalEl.getBoundingClientRect();
+    // left/top 固定为 0：位置只用 translate 给（这样量到的 rect 不含定位偏移，宽度才是真宽度）
+    if (this.modalEl.style.left !== '0px') this.modalEl.style.left = '0px';
+    if (this.modalEl.style.top !== '0px') this.modalEl.style.top = '0px';
     const vw = window.innerWidth;
     const vh = window.innerHeight;
-    let x;
-    let y;
-    if (this.dragX !== undefined && this.dragY !== undefined) {
-      x = this.dragX;
-      y = this.dragY;
-    } else {
-      const m = this.mouse || { x: Math.round(vw / 2 - rect.width / 2), y: Math.round(vh * 0.28) };
-      x = m.x;
-      y = m.y;
-    }
-    const maxX = Math.max(EDGE_GAP, vw - rect.width - EDGE_GAP);
-    const maxY = Math.max(EDGE_GAP, vh - rect.height - EDGE_GAP);
-    x = Math.min(Math.max(EDGE_GAP, x), maxX);
-    y = Math.min(Math.max(EDGE_GAP, y), maxY);
-    this.modalEl.style.left = Math.round(x) + 'px';
-    this.modalEl.style.top = Math.round(y) + 'px';
-    this.modalEl.style.transform = 'none';
-    this.modalEl.style.margin = '0';
+    const gap = EDGE_GAP;
+    let m = this.mouse || { x: Math.round(vw / 2), y: Math.round(vh * 0.28) };
+    if (this.dragX !== undefined && this.dragY !== undefined) m = { x: this.dragX, y: this.dragY };
+
+    const rect = this.modalEl.getBoundingClientRect();
+    const w = rect.width || 320;
+    const h = rect.height || 200;
+    const maxX = Math.max(gap, vw - w - gap);
+    const maxY = Math.max(gap, vh - h - gap);
+    const x = Math.min(Math.max(gap, m.x + CELL_GAP), maxX);
+    const y = Math.min(Math.max(gap, m.y + CELL_GAP), maxY);
+    this.modalEl.style.transform = 'translate(' + Math.round(x) + 'px, ' + Math.round(y) + 'px)';
   }
 
   moveTo(x, y) {
@@ -1166,6 +1171,12 @@ class QuickPanelPlugin extends Plugin {
       id: 'open-config',
       name: '打开配置文件（快接面板.json）',
       callback: () => this.openConfigFile(),
+    });
+    // 故障排查用：打开面板后跑这条，把真实几何写进库根 .quick-panel-diag.txt（可随时删）
+    this.addCommand({
+      id: 'diagnose',
+      name: '导出面板诊断（排查显示问题用）',
+      callback: () => this.dumpPanelDiagnostics(),
     });
 
     if (this.configNotice) new Notice(this.configNotice, 8000);
@@ -1323,8 +1334,77 @@ class QuickPanelPlugin extends Plugin {
     return true;
   }
 
-  /** 记一笔「最近用过」：只写配置文件，且失败也不打扰用户（不影响主流程） */
-  touchRecent(item) {
+  /**
+   * 诊断：把「面板到底被渲染成什么样」写进库根 .quick-panel-diag.txt。
+   * 用它替代"让用户截图/复制控制台"—— agent 直接读文件就能定性。
+   */
+  async dumpPanelDiagnostics() {
+    const box = (el) => {
+      if (!el) return '缺失';
+      const r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+      if (!r) return '无 rect';
+      return (
+        'x=' + Math.round(r.left) + ' y=' + Math.round(r.top) +
+        ' w=' + Math.round(r.width) + ' h=' + Math.round(r.height)
+      );
+    };
+    const styleOf = (el, props) => {
+      if (!el) return '缺失';
+      const cs = window.getComputedStyle(el);
+      return props.map((p) => p + '=' + cs.getPropertyValue(p)).join(' ');
+    };
+    const lines = [];
+    lines.push('quick-panel 诊断 · ' + new Date().toISOString() + '（本文件可随时删除）');
+    lines.push('viewport ' + window.innerWidth + 'x' + window.innerHeight + ' dpr=' + window.devicePixelRatio);
+    const modal = this.modal;
+    if (!modal) {
+      const el = document.querySelector('.modal-container.quick-panel');
+      lines.push('当前没有活动面板实例；dom 里' + (el ? '有' : '没有') + ' .modal-container.quick-panel');
+      if (el) {
+        lines.push('  container ' + box(el) + ' | ' + styleOf(el, ['position', 'width', 'height', 'display', 'transform']));
+        const card = el.querySelector('.modal');
+        lines.push('  card ' + box(card) + ' | ' + styleOf(card, ['position', 'width', 'max-width', 'padding']));
+      }
+      new Notice('没有活动的面板实例；已导出 DOM 现状到库根 .quick-panel-diag.txt');
+    } else {
+      const container = modal.containerEl || (modal.modalEl && modal.modalEl.closest ? modal.modalEl.closest('.modal-container') : null);
+      const card = modal.modalEl;
+      lines.push('配置：' + this.configPath + '（来自磁盘=' + this.loadedFromDisk + '） corrupt=' + !!modal.config.corrupt);
+      lines.push('解析到的命令条目数=' + (this.registry ? this.registry.all.length : '未解析') +
+        '；面板条目=' + modal.items.length + '；可见=' + modal.visible.length + '；缺失=' + modal.missing.length);
+      lines.push('columns=' + modal.columns + ' rows=' + JSON.stringify(modal.rows) + ' query=' + JSON.stringify(modal.query));
+      lines.push('container ' + box(container) + ' | ' + styleOf(container, ['position', 'width', 'height', 'display', 'transform', 'opacity']));
+      lines.push('  container id/class: ' + (container ? container.id + ' / ' + container.className : ''));
+      lines.push('card ' + box(card) + ' | ' + styleOf(card, ['position', 'left', 'top', 'width', 'max-width', 'padding', 'min-height']));
+      lines.push('  modalEl 内联 left=' + (card ? card.style.left : '') + ' top=' + (card ? card.style.top : '') +
+        ' --qp-width=' + (card && card.style.getPropertyValue ? card.style.getPropertyValue('--qp-width') : ''));
+      const bg = container && container.querySelector ? container.querySelector('.modal-bg') : null;
+      lines.push('bg ' + box(bg) + ' | ' + styleOf(bg, ['position', 'width', 'height', 'background-color', 'opacity']));
+      const content = modal.contentEl;
+      lines.push('content ' + box(content) + ' | ' + styleOf(content, ['display', 'max-height', 'overflow']));
+      const grid = modal.gridEl;
+      lines.push('grid ' + box(grid) + ' | ' + styleOf(grid, ['display', 'grid-template-columns', 'gap', 'width']));
+      const cells = content && content.querySelectorAll ? content.querySelectorAll('.qp-cell') : [];
+      lines.push('cells=' + cells.length + '；首格 ' + (cells[0] ? box(cells[0]) + ' | ' + styleOf(cells[0], ['display', 'width', 'height', 'background-color', 'opacity']) : '（无）'));
+      if (cells[0] && cells[0].querySelector) {
+        const lbl = cells[0].querySelector('.qp-cell-label');
+        lines.push('  首格 label="' + (lbl ? lbl.textContent : '') + '" title="' + (cells[0].getAttribute('title') || '') + '"');
+      }
+      lines.push('最近用过=' + modal.recent.length + '；状态栏="' + (modal.statusEl ? modal.statusEl.textContent : '') + '"');
+      if (modal.searchEl) lines.push('搜索框 ' + box(modal.searchEl));
+      lines.push('最近 5 次执行：' + (this.execLog.slice(-5).map((e) => e.name).join(' / ') || '（无）'));
+      new Notice('已导出诊断到库根 .quick-panel-diag.txt（' + lines.length + ' 行）');
+    }
+    const text = lines.join('\n') + '\n';
+    try {
+      await this.app.vault.adapter.write('.quick-panel-diag.txt', text);
+    } catch (e) {
+      console.log(lines.join('\n'));
+      new Notice('写诊断文件失败：' + ((e && e.message) || e));
+    }
+  }
+
+  /** 记一笔「最近用过」：只写配置文件，且失败也不打扰用户（不影响主流程） */  touchRecent(item) {
     try {
       const now = Date.now();
       const entry = { type: itemType(item), usedAt: now };

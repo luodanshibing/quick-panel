@@ -556,8 +556,11 @@ ok(/registerDomEvent\(document, 'mousemove'/.test(code), '鼠标位置来自缓�
 ok(!/document\.addEventListener/.test(code), '不绕过 registerDomEvent 直接挂全局监听（卸载才干净）');
 ok(/gridColumns\(/.test(code), '列数由 gridColumns 纯函数决定，不写死在 CSS');
 ok(!/setInterval/.test(code), '全文件没有 setInterval（面板生命周期不依赖定时器）');
-ok((code.match(/\.write\(/g) || []).length === 1, '全文件只有一处写盘调用（只可能写那一个 JSON）');
-ok((code.match(/adapter\.write/g) || []).length === 1, '唯一写盘走 vault.adapter.write');
+ok((code.match(/\.write\(/g) || []).length === 2, '全文件只有两处写盘调用（配置文件 + 诊断文件），没有第三个写点');
+ok((code.match(/adapter\.write\(/g) || []).length === 2, '两处写盘都走 vault.adapter.write');
+ok(code.indexOf("adapter.write(this.configPath") >= 0, '写盘目标之一就是配置文件的固定路径 this.configPath');
+ok(code.indexOf("'.quick-panel-diag.txt'") >= 0, '另一处写盘是显式命名的诊断文件（可用完即删）');
+ok(!/adapter\.write\((?!this\.configPath|'\.quick-panel-diag\.txt')/.test(code), '不存在指向其它路径的写盘调用');
 ok(!/\.obsidian/.test(code), '源码里不出现 .obsidian（不碰插件配置目录）');
 ok(!/vault\.modify|vault\.create|vault\.delete/.test(code), '不创建/删除库内文件');
 ok(/class QuickPanelModal extends Modal/.test(code) && /this\.cellNodes = \[\]/.test(code), 'onClose 里释放网格节点引用');

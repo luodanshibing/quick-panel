@@ -2,7 +2,9 @@
 
 An icon grid that one hotkey away — pin the commands and notes you actually use onto a panel that appears where your mouse is, so you don't have to memorise hotkeys or type search queries.
 
-> Status: **v0.1.0 — batch 1 of 3 (panel + execute + icons)**. Working today: the panel, keyboard/mouse execution, icons from three sources, live config file, broken-item detection. Coming next: add-a-tile from inside the panel, tile context menu, file/folder tiles, import/export. See *Roadmap* below.
+> Status: **v0.1.1 — batch 1 of 3 (panel + execute + icons)**. Working today: the panel, keyboard/mouse execution, icons from three sources, live config file, broken-item detection. Coming next: add-a-tile from inside the panel, tile context menu, file/folder tiles, import/export. See *Roadmap* below.
+>
+> **v0.1.1 fixes a real display bug found on first run**: the modal container lost its viewport size (so the whole screen dimmed while the panel was pushed off-screen, leaving a white sliver in the corner), and the card's `top` clamp let it overflow the bottom edge. The container is now viewport-sized and the panel is positioned with `left/top: 0` + `translate()`, clamped using the measured rect. If the panel still looks wrong, run the command **导出面板诊断（排查显示问题用）** — it writes the real geometry to `.quick-panel-diag.txt` in the vault root.
 
 ## What it is
 
@@ -10,7 +12,7 @@ If you have ever used the "quick access panel" in SolidWorks, this is the same h
 
 **You cannot register a system-wide global hotkey from an Obsidian plugin** — `globalShortcut` lives in Electron's main process, and plugins run in the renderer. So this plugin does the next best thing: **one key inside the Obsidian window** (you bind it yourself) plus a ribbon icon.
 
-## Features (v0.1.0)
+## Features (v0.1.1)
 
 - **Icon grid panel**, opened by a command or the ribbon icon, positioned at your mouse pointer and draggable by its header.
 - **Columns adapt to the window width** (2–12), computed by a pure function, never hard-coded.
@@ -83,6 +85,16 @@ node tools/check-id.mjs    # verifies the plugin id is not taken in the communit
 
 Deployment and commit are gated on that exit code: non-zero means do not ship.
 
+## Troubleshooting
+
+Run **Quick Panel: 导出面板诊断（排查显示问题用）** from the command palette (after opening the panel once). It writes `.quick-panel-diag.txt` to the vault root with the real numbers: viewport size, the modal container / card / `.modal-bg` / grid / first cell rectangles, the computed `display` / `width` / `transform` of each, how many items were resolved, and the last five commands you ran. Delete the file afterwards — it is created only when you run that command.
+
+| Symptom | Likely cause |
+|---|---|
+| Whole screen dims, panel not visible / a white sliver in a corner | A theme or another plugin overrides `.modal-container` / `.modal` geometry. Run the diagnostic and check `container` and `card` rects |
+| Panel opens but stays empty with a status line | The config file has bad rows, or every command id in it is missing (the status line says how many) |
+| A tile is greyed out | Its command id no longer exists (plugin disabled/renamed) or its path is gone — right-click the tile for "re-bind" |
+
 ## Roadmap
 
 | Batch | Contents | State |
@@ -103,7 +115,9 @@ MIT — see [LICENSE](LICENSE).
 
 一个快捷键呼出的**图标网格面板**：把你真正在用的命令、笔记、文件夹钉在眼前，不用记快捷键，也不用打字搜索。
 
-> 状态：**v0.1.0 —— 三批里的第 1 批（面板 + 执行 + 图标）**。现在能用的：面板本体、键盘/鼠标执行、三种图标来源、库内配置文件实时生效、失效项检测。下一批：面板内即时添加、格子右键菜单；再下一批：文件/文件夹项打磨与导入导出。
+> 状态：**v0.1.1 —— 三批里的第 1 批（面板 + 执行 + 图标）**。现在能用的：面板本体、键盘/鼠标执行、三种图标来源、库内配置文件实时生效、失效项检测。下一批：面板内即时添加、格子右键菜单；再下一批：文件/文件夹项打磨与导入导出。
+>
+> **v0.1.1 修的是第一次实测暴露的显示 bug**：容器丢掉视口尺寸（结果整屏变暗、面板被挤出屏幕、只在角上留一块白条），以及卡片靠 `top` 钳位导致底边溢出。现在容器铺满视口、面板用 `left/top: 0` + `translate()` 定位并按实测尺寸钳位。若显示仍不对，跑命令 **导出面板诊断（排查显示问题用）**，它会把真实几何写进库根 `.quick-panel-diag.txt`。
 
 ## 它是什么
 
@@ -111,7 +125,7 @@ MIT — see [LICENSE](LICENSE).
 
 **Obsidian 插件注册不了系统级全局热键** —— `globalShortcut` 属 Electron 主进程，插件跑在渲染进程。所以本插件做的是次优解：**Obsidian 窗口内一键呼出**（快捷键由你自己绑）+ ribbon 图标入口。
 
-## 现在具备的（v0.1.0）
+## 现在具备的（v0.1.1）
 
 - **图标网格面板**：命令或 ribbon 图标呼出，**出现在鼠标位置**，拖头部可移动。
 - **列数随窗口自适应**（2–12 列），由纯函数算，不写死在 CSS 里。
