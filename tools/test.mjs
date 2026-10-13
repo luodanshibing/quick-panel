@@ -1429,6 +1429,56 @@ try {
     ok(previewTexts[4].indexOf('默认图标') >= 0, '留空时说明将用默认图标：' + previewTexts[4]);
   }
 
+  /* v0.5.2 五条真机反馈的回归 */
+  {
+    // ① 设置改动就地生效：不许每改一项就 reopen（那会叠弹窗）
+    ok(/notifyConfigChanged\(\)/.test(SOURCE), '设置改动会通知面板就地生效');
+    ok(/onConfigChanged\(fn\)/.test(SOURCE), '有配置变更监听机制');
+    ok(/rebuild\(\) \{[\s\S]{0,220}this\.contentEl\.empty\(\)/.test(SOURCE), 'rebuild 先清空内容区（否则叠出多份头部）');
+    ok(!/settings\.onClosed = function \(\) \{\s*off\(\);\s*\/\/[^\n]*\n\s*if \(modal && modal\.rebuild\) modal\.rebuild\(\);\s*\};[\s\S]{0,200}this\.plugin\.reopen\(\)/.test(SOURCE), '设置关闭后不再额外 reopen 面板');
+
+    // ② rebuild 行为：内容不叠加
+    let reopens = 0;
+    const host2 = Object.assign({}, clickHost, {
+      reopen() {
+        reopens += 1;
+      },
+    });
+    const m2 = new QP.QuickPanelModal(fakeApp, host2, QP.normalizePanelConfig({
+      version: 2,
+      panel: { showSearch: true, showRecent: true },
+      items: [{ type: 'command', id: 'app:open-settings', label: '设置' }],
+      recent: [{ type: 'command', id: 'app:open-settings', usedAt: 1 }],
+    }), {});
+    m2.modalEl = new FakeElement('div');
+    m2.modalEl.addClass('modal-container');
+    m2.modalEl.addClass('quick-panel');
+    m2.contentEl = new FakeElement('div');
+    m2.modalEl.appendChild(m2.contentEl);
+    m2.scope = { register() {} };
+    m2.registerDomEvent = () => {};
+    m2.onOpen();
+    const before = m2.contentEl.children.length;
+    m2.rebuild();
+    m2.rebuild();
+    eq(m2.contentEl.children.length, before, '连续 rebuild 两次后内容节点数不变（不叠加）：' + before);
+    eq(reopens, 0, 'rebuild 成功时不会退回 reopen');
+    eq(m2.contentEl.querySelectorAll('qp-grid').length, 1, '重建后只有一个网格');
+    eq(m2.contentEl.querySelectorAll('qp-header').length, 1, '重建后只有一个头部');
+
+    // ③ 显示过滤框开关：重建后搜索框该出现就出现、该消失就消失
+    ok(m2.contentEl.querySelector('qp-search-input') !== null, '开过滤框时重建后有搜索框');
+    m2.config = QP.normalizePanelConfig({ version: 2, panel: { showSearch: false }, items: [], recent: [] });
+    m2.rebuild();
+    eq(m2.contentEl.querySelectorAll('qp-search-input').length, 0, '关掉过滤框后重建，搜索框消失（开关确实生效）');
+
+    // ④ 格子大小要同时影响宽高；⑤ 命令名过长不再看不全
+    ok(/\.qp-icon \{[\s\S]{0,200}width: var\(--qp-cell/.test(STYLES) && /\.qp-icon \{[\s\S]{0,200}height: var\(--qp-cell/.test(STYLES), '格子大小同时作用于图标的宽与高');
+    ok(/\.qp-icon-img \{[\s\S]{0,160}max-width: var\(--qp-cell/.test(STYLES), '图片图标也跟随格子大小');
+    ok(/-webkit-line-clamp: 3/.test(STYLES), '长命令名最多显示 3 行（原来是 2 行，容易被截断）');
+    ok(/\.qp-cell \{[\s\S]{0,400}border: 1px solid var\(--background-modifier-border\)/.test(STYLES), '每个格子都有无底色的淡边框');
+  }
+
   {
     ok(/removeItem\(item\)[\s\S]{0,260}reopen\(\)/.test(SOURCE), '删除动作里 removeItem 之后紧接着调用 reopen（面板当场刷新）');
     ok(/self\.addItem\(entry, insertAt\)[\s\S]{0,360}self\.reopen\(\)/.test(SOURCE), '选择器添加之后也走 reopen（统一刷新口径）');

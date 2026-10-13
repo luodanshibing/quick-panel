@@ -683,6 +683,32 @@ class QuickPanelModal extends Modal {
     if (this.opts.autoHighlightFirst !== false) this.setHighlight(0);
   }
 
+  /**
+   * 就地重建面板内容（设置改动后调用）。
+   * ⚠️ 必须先清空内容区：Obsidian 的弹窗共用 DOM 容器，只追加会叠出多份头部 —— 那正是
+   *   "每次改设置就多一层"的根源。这里复用同一个实例，不再 open 新弹窗。
+   */
+  rebuild() {
+    try {
+      this.contentEl.empty();
+      this.cellNodes = [];
+      this.recentEl = null;
+      this.gridEl = null;
+      this.statusEl = null;
+      this.searchEl = null;
+      this.buildHeader();
+      if (this.config.panel.showSearch) this.buildSearch();
+      this.buildGrid();
+      if (this.config.panel.showRecent) this.buildRecent();
+      this.buildFooter();
+      this.render();
+      this.setHighlight(0);
+    } catch (e) {
+      // 重建失败就退回"重开面板"，至少不会留下半截界面
+      this.host.reopen();
+    }
+  }
+
   /** 把面板用到的键注册到 Modal 自带的 scope 上（Escape 由基类处理，这里不抢） */
   registerKeys() {
     const scope = this.scope;
@@ -1549,6 +1575,11 @@ function renderPanelSettingsRows(container, plugin, onAfterChange) {
     });
     plugin.config = next;
     plugin.writePanelConfig(next, { silent: true });
+    try {
+      plugin.notifyConfigChanged();
+    } catch (e) {
+      /* 通知失败不影响写入 */
+    }
     if (typeof onAfterChange === 'function') onAfterChange(next.panel);
   };
 
@@ -1654,7 +1685,14 @@ class QuickPanelSettingsModal extends Modal {
 
   onClose() {
     this.contentEl.empty();
-    this.plugin.reopen();
+    // 只在关闭设置时重建一次面板（原来每改一项就 reopen，导致弹窗一层层叠起来）
+    if (typeof this.onClosed === 'function') {
+      try {
+        this.onClosed();
+      } catch (e) {
+        /* 忽略 */
+      }
+    }
   }
 
   render() {
@@ -1820,6 +1858,8 @@ class QuickPanelPlugin extends Plugin {
     this.config = null;
     this.configNotice = '';
     this.registry = null;
+    // 配置变更监听：设置里每改一项就让面板就地生效，不重开弹窗（否则每改一次叠一层）
+    this._configListeners = [];
 
     /*
      * 启动阶段零监听：面板居中，不需要跟踪鼠标，也不注册任何常驻事件。
@@ -2375,9 +2415,19 @@ class QuickPanelPlugin extends Plugin {
     picker.open();
   }
 
-  /** 打开设置面板（从面板的 ⋯ → 设置进入） */
+  /** 打开设置面板（从面板的 ⋯ → 设置进入）。设置改动就地生效，不重开弹窗 */
   openSettings() {
-    new QuickPanelSettingsModal(this.app, this).open();
+    const modal = this.modal;
+    const off = this.onConfigChanged(() => {
+      if (modal && modal.rebuild) modal.rebuild();
+    });
+    const settings = new QuickPanelSettingsModal(this.app, this);
+    settings.onClosed = function () {
+      off();
+      // 关闭设置时只重建一次面板（不是每改一项就重开）
+      if (modal && modal.rebuild) modal.rebuild();
+    };
+    settings.open();
   }
 
   /** 图标候选（运行期全量优先） */
@@ -2388,6 +2438,27 @@ class QuickPanelPlugin extends Plugin {
       /* 拿不到就用兜底清单 */
     }
     return [];
+  }
+
+  /** 注册"配置已改"监听（设置弹窗用；返回取消函数） */
+  onConfigChanged(fn) {
+    if (typeof fn !== 'function') return function () {};
+    this._configListeners = this._configListeners || [];
+    this._configListeners.push(fn);
+    return () => {
+      this._configListeners = (this._configListeners || []).filter((f) => f !== fn);
+    };
+  }
+
+  /** 通知所有监听者：配置刚被改写 */
+  notifyConfigChanged() {
+    (this._configListeners || []).forEach(function (fn) {
+      try {
+        fn();
+      } catch (e) {
+        /* 单个监听出错不影响其它 */
+      }
+    });
   }
 
   /** 记一笔执行历史（进诊断文件用；面板最多留 50 条） */

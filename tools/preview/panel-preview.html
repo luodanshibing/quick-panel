@@ -241,9 +241,10 @@
   justify-content: flex-start;
   gap: 6px;
   height: auto;
-  min-height: calc(var(--qp-cell, 40px) + 34px);
+  min-height: calc(var(--qp-cell, 40px) + 38px);
   padding: 10px 4px 8px;
-  border: 1px solid transparent;
+  /* 每个格子都有淡边框（无底色），一致性与可点性都更好 */
+  border: 1px solid var(--background-modifier-border);
   border-radius: 10px;
   background: transparent;
   color: var(--text-normal);
@@ -252,7 +253,7 @@
   overflow: hidden;
 }
 
-/* 有些主题给 button 加了底色或高度，这里强制还原 */
+/* 有些主题给 button 加了底色或高度，这里强制还原（边框保留） */
 .qp-cell,
 .qp-cell:hover,
 .qp-cell:focus,
@@ -263,6 +264,7 @@
 
 .qp-cell:hover {
   background: var(--background-modifier-hover);
+  border-color: var(--interactive-accent);
 }
 
 .qp-cell.is-active {
@@ -282,8 +284,10 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  /* 宽高都跟设置联动（原来只改了高度，宽高不一致会显得图标被压扁/拉伸） */
   width: var(--qp-cell, 40px);
   height: var(--qp-cell, 40px);
+  flex: 0 0 auto;
   color: var(--text-muted);
 }
 
@@ -293,6 +297,22 @@
 }
 
 .qp-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* 格子大小设置也要带动图片图标与 emoji（否则只有 Lucide 图标跟着变） */
+.qp-icon-img {
+  max-width: var(--qp-cell, 40px);
+  max-height: var(--qp-cell, 40px);
+}
+
+.qp-icon-ph {
+  width: var(--qp-cell, 40px);
+  height: var(--qp-cell, 40px);
+}
+
+.qp-icon-ph svg {
   width: 100%;
   height: 100%;
 }
@@ -314,10 +334,12 @@
   text-align: center;
   color: var(--text-normal);
   overflow: hidden;
+  /* 命令名过长不再被截断成看不见：最多 3 行，超出才省略（悬停 title 里始终有完整名字） */
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   word-break: break-word;
+  hyphens: auto;
 }
 
 .qp-cell.is-missing .qp-cell-label {
@@ -415,8 +437,179 @@
   white-space: nowrap;
 }
 
-/* ---------- 确认弹窗（重新绑定等） ---------- */
+/* ---------- 设置面板 ---------- */
 
+.modal-container.qp-settings .modal {
+  width: min(520px, calc(100vw - 32px));
+}
+
+.qp-settings .modal-content {
+  padding: 14px 16px 10px;
+}
+
+.qp-settings .setting-item {
+  padding: 8px 0;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.qp-settings .setting-item:first-of-type {
+  border-top: none;
+}
+
+.qp-settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* ---------- 添加格子选择器（命令 / 笔记 / 文件夹） ---------- */
+
+.qp-picker .modal {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+}
+
+.qp-picker .modal-content {
+  padding: 12px 14px 8px;
+}
+
+.qp-picker-search {
+  margin-bottom: 8px;
+}
+
+.qp-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: min(52vh, 420px);
+  overflow: auto;
+}
+
+.qp-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.qp-picker-item.is-active,
+.qp-picker-item:hover {
+  background: var(--background-modifier-hover);
+}
+
+/* 图标名在本机不存在：文字变淡提示"它不会显示图标" */
+.qp-picker-item.is-no-icon .qp-picker-label {
+  color: var(--text-faint);
+}
+
+.qp-picker-icon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
+.qp-picker-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.qp-picker-text {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.qp-picker-label {
+  font-size: 13px;
+  color: var(--text-normal);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.qp-picker-sub {
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 图标建议项 */
+
+.qp-suggest-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.qp-suggest-icon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
+.qp-suggest-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.qp-suggest-label {
+  font-size: 13px;
+}
+
+/* 确认窗里的输入框（改名用） */
+
+.qp-confirm-input {
+  margin-bottom: 12px;
+}
+
+.qp-confirm-input .qp-search-input {
+  width: 100%;
+}
+
+/* 图标实时预览 */
+
+.qp-icon-preview {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  min-height: 34px;
+}
+
+.qp-icon-preview-svg {
+  width: 28px;
+  height: 28px;
+  color: var(--text-normal);
+}
+
+.qp-icon-preview-svg svg {
+  width: 100%;
+  height: 100%;
+}
+
+.qp-icon-preview-emoji {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.qp-icon-preview-img {
+  max-width: 32px;
+  max-height: 32px;
+  object-fit: contain;
+}
+
+.qp-icon-preview-label {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+/* ---------- 确认弹窗（重新绑定等） ---------- */
 .modal-container.qp-confirm {
   position: fixed;
   inset: 0;
