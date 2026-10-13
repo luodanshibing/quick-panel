@@ -35,8 +35,8 @@ const CONFIG_NAME = '快捷面板.json';
 /** 改名前的旧文件名（2026-10-13 用户把面板名定为「快捷面板」）；首次加载时自动迁移 */
 const CONFIG_NAME_LEGACY = '快接面板.json';
 
-/** 配置文件结构版本；将来结构变了用它做迁移判断 */
-const CONFIG_VERSION = 1;
+/** 配置文件结构版本；v2 起：默认不放搜索框、默认格子换成核验过的核心命令 */
+const CONFIG_VERSION = 2;
 
 /** 「最近用过」最多保留几条 */
 const RECENT_LIMIT = 12;
@@ -54,7 +54,7 @@ const EDGE_GAP = 12;
 const EXEC_DELAY_MS = 40;
 
 /** 网格可用宽度的上限（px）—— 视口再宽也不让面板摊成一片 */
-const MAX_PANEL_WIDTH = 860;
+const MAX_PANEL_WIDTH = 720;
 
 /**
  * 兜底图标候选清单。
@@ -82,15 +82,22 @@ const LUCIDE_CANDIDATES = [
   'undo', 'upload', 'user', 'wand', 'wrench', 'x', 'zap',
 ];
 
-/** 首次运行灌入的示例格子：都是 Obsidian 自己的命令，随时可删 */
+/**
+ * 首次运行灌入的示例格子。
+ * 只放**核验过确实存在**的 Obsidian 核心命令（2026-10-13 在 obsidian.asar 里逐个查过 id），
+ * 不放 context 相关、可能不可用的（例如 graph:open 在未启用关系图谱时会失败）。
+ */
 const DEMO_ITEMS = [
   { type: 'command', id: 'app:open-settings', label: '设置', icon: 'settings' },
+  { type: 'command', id: 'global-search:open', label: '全局搜索', icon: 'search' },
+  { type: 'command', id: 'switcher:open', label: '快速切换', icon: 'files' },
+  { type: 'command', id: 'backlink:open', label: '反向链接', icon: 'link' },
+  { type: 'command', id: 'workspace:new-tab', label: '新标签页', icon: 'plus' },
   { type: 'command', id: 'app:reload', label: '重载应用', icon: 'refresh-cw' },
-  { type: 'command', id: 'global-search', label: '全局搜索', icon: 'search' },
-  { type: 'command', id: 'graph:open', label: '关系图谱', icon: 'git-branch' },
-  { type: 'command', id: 'app:go-back', label: '后退', icon: 'arrow-left-right' },
-  { type: 'command', id: 'app:go-forward', label: '前进', icon: 'arrow-left-right' },
 ];
+
+/** 配置升级到 v2 时要用的默认格子（旧配置那 6 条里有 context 相关的，换掉） */
+const V2_DEFAULT_ITEMS = DEMO_ITEMS;
 
 /* =====================================================================================
  * 二、纯函数（离线可测，不碰 DOM / 不碰 Obsidian 运行时）
@@ -168,7 +175,8 @@ function normalizePanelSettings(raw) {
     columns: 'auto',
     showRecent: true,
     iconSize: 40,
-    showSearch: true,
+    // v2 起默认不显示过滤框：面板本身就能直接打字过滤，多一个框只是噪音（用户反馈）
+    showSearch: false,
   };
   if (Number.isInteger(src.columns) && src.columns >= 2 && src.columns <= 12) out.columns = src.columns;
   if (typeof src.showRecent === 'boolean') out.showRecent = src.showRecent;
@@ -583,18 +591,9 @@ class QuickPanelModal extends Modal {
     const header = this.contentEl.createDiv({ cls: 'qp-header' });
     const title = header.createDiv({ cls: 'qp-title' });
     title.createSpan({ cls: 'qp-title-text', text: '快捷面板' });
-    title.createSpan({
-      cls: 'qp-count',
-      text: this.items.length + ' 格' + (this.missing.length ? ' · ' + this.missing.length + ' 项待处理' : ''),
-    });
 
+    // 只留一个 ×（用户指出的"两个叉"：另一个是 Obsidian 弹窗原生关闭按钮，已在 CSS 里隐藏）
     const actions = header.createDiv({ cls: 'qp-actions' });
-    const addBtn = actions.createEl('button', { cls: 'qp-icon-btn', attr: { type: 'button' } });
-    setIcon(addBtn, 'plus');
-    addBtn.setAttribute('aria-label', '添加（下一批实现）');
-    addBtn.addEventListener('click', () => {
-      new Notice('「即时添加」在下一批实现：先用文本编辑器打开 快捷面板.json 手写一条');
-    });
     const menuBtn = actions.createEl('button', { cls: 'qp-icon-btn', attr: { type: 'button' } });
     setIcon(menuBtn, 'more-horizontal');
     menuBtn.setAttribute('aria-label', '更多');
@@ -609,7 +608,7 @@ class QuickPanelModal extends Modal {
     const wrap = this.contentEl.createDiv({ cls: 'qp-search' });
     const input = wrap.createEl('input', {
       cls: 'qp-search-input',
-      attr: { type: 'text', placeholder: '过滤面板（Enter 执行第一格 · Esc 清空）' },
+      attr: { type: 'text', placeholder: '过滤（可选，面板里直接打字也一样）' },
     });
     this.searchEl = input;
     input.addEventListener('input', () => {
@@ -629,11 +628,10 @@ class QuickPanelModal extends Modal {
     this.recentEl = wrap.createDiv({ cls: 'qp-recent-row' });
   }
 
+  /** 底部只留"有问题时才出现"的一行状态；操作提示与计数都已删掉（用户反馈多余） */
   buildFooter() {
     const foot = this.contentEl.createDiv({ cls: 'qp-footer' });
     this.statusEl = foot.createDiv({ cls: 'qp-status' });
-    const hint = foot.createDiv({ cls: 'qp-hint' });
-    hint.setText('方向键选择 · Enter 执行 · 直接打字过滤 · Esc 关闭');
   }
 
   /* ---- 渲染 ---- */
@@ -886,7 +884,7 @@ class QuickPanelModal extends Modal {
           label: '仍要执行（若命令只是暂时不可用）',
           onClick: function () {
             self.silentClose();
-            self.host.runCommandById(id, null, true);
+            self.host.runCommandById(id, null);
           },
         },
       ]).open();
@@ -903,10 +901,10 @@ class QuickPanelModal extends Modal {
         try {
           editor.focus();
         } catch (e) {
-          /* 聚焦失败不致命，继续执行，失败提示由 executeCommandById 给 */
+          /* 聚焦失败不致命，继续执行；真正的失败提示在 host.runCommandById 里给 */
         }
       }
-      this.host.runCommandById(id, cmd, false);
+      this.host.runCommandById(id, cmd);
     }.bind(this), needsEditor ? EXEC_DELAY_MS : 0);
     return undefined;
   }
@@ -1199,7 +1197,42 @@ class QuickPanelPlugin extends Plugin {
         notice: '配置里有 ' + parsed.errors.length + ' 条格式不对，已忽略：' + parsed.errors.slice(0, 3).join('；'),
       };
     }
+    // 结构升级 v1 → v2：把示例格换成核验过的核心命令（旧那 6 条里有 context 相关的，点了会没反应）
+    if (parsed.version < CONFIG_VERSION) {
+      const upgraded = await this.upgradeConfig(parsed);
+      return {
+        config: upgraded,
+        fromDisk: true,
+        notice:
+          renameNotice +
+          '已把面板升级到 v' + CONFIG_VERSION + '：默认格子换成核验过的核心命令（旧示例里的"关系图谱/后退/前进"依赖上下文，点了不一定会执行）。',
+      };
+    }
     return { config: parsed, fromDisk: true, notice: renameNotice };
+  }
+
+  /** 结构升级：只换掉"还是默认示例"的那些格子，用户自己加的条目一律保留 */
+  async upgradeConfig(config) {
+    const defaultIds = ['app:open-settings', 'app:reload', 'global-search', 'graph:open', 'app:go-back', 'app:go-forward'];
+    const items = config.items || [];
+    const isStock =
+      items.length > 0 &&
+      items.every(function (it) {
+        return itemType(it) === 'command' && defaultIds.indexOf(asString(it.id).trim()) >= 0;
+      });
+    const next = normalizePanelConfig({
+      version: CONFIG_VERSION,
+      panel: config.panel,
+      items: isStock ? V2_DEFAULT_ITEMS : items,
+      recent: config.recent,
+    });
+    this.config = next;
+    try {
+      await this.writePanelConfig(next, { silent: true });
+    } catch (e) {
+      /* 写不进去也不影响本次使用 */
+    }
+    return next;
   }
 
   async writePanelConfig(config, opts) {
@@ -1275,23 +1308,65 @@ class QuickPanelPlugin extends Plugin {
     return this.registry;
   }
 
-  /** 执行命令并把结果说出来（失败绝不静默） */
-  runCommandById(id, cmd, quietOnSuccess) {
+  /**
+   * 执行命令并把结果说出来（失败绝不静默）。
+   *
+   * ⚠️ 关键事实（2026-10-13 从 obsidian.asar 读出来的）：
+   *   `executeCommandById(id, evt)` 内部 = `findCommand` + `executeCommand`；
+   *   而 `executeCommand` 会调用内部 `o5(cmd)` —— 它在 cmd 自带 callback / checkCallback /
+   *   editorCallback / editorCheckCallback 时**同步调用**并返回结果，但**没有 `return` 那一层的值**，
+   *   所以官方 API 的返回值对这类命令**不可靠**（拿到的可能是 undefined 或一个 Promise）；
+   *   并且命令内部抛异常时是 `console.error` 吞掉、**不往外抛**。
+   *   → 所以这里要三件事：① 执行前后都校验命令是否还在注册表里；② await 掉返回值（Promise 的拒绝
+   *   也要落成可见提示）；③ 自己给"什么都没发生"兜一层提示，不假装成功。连点两次会被我们判定为
+   *   "这条命令没法在面板里直接执行"（例如它需要一个活动编辑器），并告诉用户去命令面板跑。
+   */
+  runCommandById(id, cmd) {
     const registry = this.commandRegistry();
     const target = cmd || registry.find(id);
     const label = target && cleanLabel(target.name) ? cleanLabel(target.name) : id;
-    let ok = false;
+    if (!target) {
+      new Notice('这条命令已经不在注册表里了：' + id + '（右键这个格子可以重新绑定）', 8000);
+      return false;
+    }
+    const needsEditor = typeof target.editorCallback === 'function' || typeof target.editorCheckCallback === 'function';
+    if (needsEditor && !this.app.workspace.activeEditor) {
+      new Notice('「' + label + '」需要先打开一个笔记才能执行', 8000);
+      return false;
+    }
+    // 防"点了没反应"：同一条命令短时间内再点一次 → 明确告诉用户它没跑起来，别再点了
+    const now = Date.now();
+    this._lastRun = this._lastRun || {};
+    const last = this._lastRun[id];
+    this._lastRun[id] = now;
+    if (last && now - last < 1200) {
+      new Notice(
+        '「' + label + '」好像没有反应。它可能需要在特定上下文里运行 —— 请用 Ctrl+P 命令面板执行，' +
+          '或右键这个格子重新绑定到别的命令。',
+        10000
+      );
+      this.logExecution(label + '(重复点击→已提示)');
+      return false;
+    }
+    let result;
     try {
-      ok = this.app.commands.executeCommandById(id);
+      result = this.app.commands.executeCommandById(id);
     } catch (e) {
-      new Notice('执行「' + label + '」出错：' + ((e && e.message) || e), 8000);
+      new Notice('执行「' + label + '」出错：' + ((e && e.message) || e), 10000);
       return false;
     }
-    if (!ok) {
-      new Notice('「' + label + '」没有执行 —— 它当前不可用（可能需要先打开一个笔记，或该命令依赖的插件没启用）', 8000);
-      return false;
+    // 异步类命令：把 Promise 的拒绝也变成可见提示（否则就是一个静默的 unhandled rejection）
+    if (result && typeof result.then === 'function') {
+      result.then(
+        () => {},
+        (e) => new Notice('执行「' + label + '」时出错：' + ((e && e.message) || e), 10000)
+      );
     }
-    if (!quietOnSuccess) this.logExecution(label);
+    // 命令可能内部把自己注销（例如打开设置面板后重载），执行后再核一次
+    if (!registry.find(id)) {
+      new Notice('「' + label + '」执行后已不在注册表里（原命令 id：' + id + '）', 8000);
+    }
+    this.logExecution(label);
     return true;
   }
 

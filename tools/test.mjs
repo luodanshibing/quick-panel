@@ -300,7 +300,8 @@ ok(desc.indexOf('，') < 0 && desc.indexOf('、') < 0, '描述不罗列功能点
 eq(QP.CONFIG_NAME, '快捷面板.json', '配置文件名固定为 快捷面板.json（可见、非点号隐藏名）');
 eq(QP.CONFIG_NAME_LEGACY, '快接面板.json', '保留旧文件名常量，用于自动迁移（改名不丢格子）');
 ok(/CONFIG_NAME_LEGACY/.test(SOURCE) && /adapter\.remove\(CONFIG_NAME_LEGACY\)/.test(SOURCE), '旧配置会被搬成新名并从库里移除');
-eq(QP.CONFIG_VERSION, 1, '配置结构版本 = 1');
+eq(QP.CONFIG_VERSION, 2, '配置结构版本 = 2（v2：默认不显示搜索框、示例格换成核验过的核心命令）');
+eq(QP.normalizePanelConfig(null).panel.showSearch, false, '默认不显示过滤框（面板里直接打字就能过滤）');
 eq(QP.RECENT_LIMIT, 12, '「最近用过」上限 12 条');
 ok(existsSync(join(ROOT, 'tools', 'check-id.mjs')), 'tools/check-id.mjs 就位');
 ok(existsSync(join(ROOT, 'tools', 'deploy.ps1')), 'tools/deploy.ps1 就位');
@@ -716,19 +717,21 @@ try {
   ok(status.getText().indexOf('2 项') >= 0, '底部状态报出失效数量：' + status.getText());
   ok(status.getText().indexOf('命令/文件已找不到') > 0, '状态文案说明了是找不到');
 
-  const header = modal.contentEl.querySelector('qp-count');
-  ok(header.getText().indexOf('5 格') === 0, '头部显示格子总数');
-
+  // 用户反馈"界面信息太多"：计数、操作提示、多余关闭按钮都已删除
+  eq(modal.contentEl.querySelectorAll('qp-count').length, 0, '头部不再显示"6 格 · N 项待处理"');
+  eq(modal.contentEl.querySelectorAll('qp-hint').length, 0, '底部不再有操作提示小字');
+  const headerBtns = modal.contentEl.querySelector('qp-actions').querySelectorAll('qp-icon-btn');
+  eq(headerBtns.length, 2, '右上只留两个按钮（更多 + 关闭），不再有第三个 ×');
   const search = modal.contentEl.querySelector('qp-search-input');
-  ok(!!search, '搜索框已渲染');
+  ok(!!search, '本用例显式开了搜索框时才渲染（默认已关闭）');
   search.value = '首页';
   search.fire('input');
   eq(modal.contentEl.querySelectorAll('qp-cell').length, 1, '过滤后只留匹配的格子');
   eq(modal.visible.length, 1, '内部可见列表同步收缩');
 
   const grid = modal.contentEl.querySelector('qp-grid');
-  eq(modal.columns, 10, '1200px 视口 → 10 列（面板宽度上限 860px）');
-  eq(grid.style.getPropertyValue('--qp-cols'), '10', '列数写进 --qp-cols（CSS 不写死）');
+  eq(modal.columns, 9, '1200px 视口 → 9 列（面板宽度上限 720px）');
+  eq(grid.style.getPropertyValue('--qp-cols'), '9', '列数写进 --qp-cols（CSS 不写死）');
   eq(grid.style.getPropertyValue('--qp-cell'), '40px', '格子尺寸来自配置');
   ok(modal.modalEl.style.getPropertyValue('--qp-width').indexOf('px') > 0, '面板宽度按列数算出来（不再自我循环）');
 
@@ -774,25 +777,25 @@ try {
   nav.onKeyDown({ key: 'Escape', target: { tagName: 'DIV' }, preventDefault() {} });
   eq(nav.query, '', 'Esc 先清空过滤词');
 
-  // 多行网格：23 格 / 10 列 → 3 行（10/10/3），上下键按「行」走而不是硬加列数
+  // 多行网格：23 格 / 9 列 → 3 行（9/9/5），上下键按「行」走而不是硬加列数
   const manyItems = [];
   for (let i = 0; i < 23; i += 1) manyItems.push({ type: 'command', id: 'app:reload', label: '第' + i + '格' });
-  const nav2 = buildPanel({ version: 1, items: manyItems, recent: [], panel: { showRecent: false } });
-  eq(nav2.rows, [10, 10, 3], '行分布 10/10/3（23 格 / 10 列）');
+  const nav2 = buildPanel({ version: 2, items: manyItems, recent: [], panel: { showRecent: false } });
+  eq(nav2.rows, [9, 9, 5], '行分布 9/9/5（23 格 / 9 列）');
   nav2.setHighlight(8);
   nav2.onKeyDown({ key: 'ArrowDown', target: { tagName: 'DIV' }, preventDefault() {} });
-  eq(nav2.highlight, 18, '按下 → 同一列下一行（8 → 18）');
+  eq(nav2.highlight, 17, '按下 → 同一列下一行（8 → 17）');
   nav2.onKeyDown({ key: 'ArrowUp', target: { tagName: 'DIV' }, preventDefault() {} });
   eq(nav2.highlight, 8, '按上回到原格');
   nav2.setHighlight(22);
   nav2.onKeyDown({ key: 'ArrowUp', target: { tagName: 'DIV' }, preventDefault() {} });
-  eq(nav2.highlight, 12, '最后一行的第 3 格（22）上移落在上一行第 3 格（12）');
-  nav2.setHighlight(19);
+  eq(nav2.highlight, 13, '最后一行的第 5 格（22，列号 4）上移落在上一行第 5 格（13）');
+  nav2.setHighlight(14);
   nav2.onKeyDown({ key: 'ArrowDown', target: { tagName: 'DIV' }, preventDefault() {} });
-  eq(nav2.highlight, 22, '从倒数第二行往下落到最后一行的同列（19 → 22）');
-  nav2.setHighlight(20);
+  eq(nav2.highlight, 22, '最后一行按下 → 走到该行最后一格（14 → 22，跟 macOS 访达一致）');
+  nav2.setHighlight(4);
   nav2.onKeyDown({ key: 'ArrowDown', target: { tagName: 'DIV' }, preventDefault() {} });
-  eq(nav2.highlight, 20, '目标行没有这一列就不动（20 已在最后一行，按下仍是 20）');
+  eq(nav2.highlight, 13, '4（列号 4）→ 下一行同列 13');
 
   /*
    * 定位：v0.1.5 起**完全交给 CSS flex**（JS 不参与定位）。
@@ -813,15 +816,29 @@ try {
 
 group('旧配置名自动迁移');
 
+/* 旧名迁移用的配置：故意放"用户自己定的"条目（非默认示例），这样不会被 v2 升级替换 */
 const legacyText = JSON.stringify({
   version: 1,
   panel: { columns: 'auto', showRecent: true, iconSize: 40, showSearch: true },
-  items: [{ type: 'command', id: 'app:reload', label: '重载', icon: 'refresh-cw' }],
+  items: [{ type: 'command', id: 'editor:toggle-source', label: '切换源码模式', icon: 'code' }],
+  recent: [],
+});
+
+/* 还是默认示例的 v1 配置（用于验证 v1→v2 结构升级） */
+const stockV1Text = JSON.stringify({
+  version: 1,
+  panel: { columns: 'auto', showRecent: true, iconSize: 40, showSearch: true },
+  items: [
+    { type: 'command', id: 'app:open-settings', label: '设置', icon: 'settings' },
+    { type: 'command', id: 'graph:open', label: '关系图谱', icon: 'git-branch' },
+    { type: 'command', id: 'app:go-back', label: '后退', icon: 'arrow-left-right' },
+  ],
   recent: [],
 });
 
 async function runMigration(files) {
   const store = Object.assign({}, files);
+  const written = [];
   const adapter = {
     exists: async (p) => Object.prototype.hasOwnProperty.call(store, p),
     read: async (p) => {
@@ -830,6 +847,7 @@ async function runMigration(files) {
     },
     write: async (p, text) => {
       store[p] = text;
+      written.push(p);
     },
     remove: async (p) => {
       delete store[p];
@@ -839,16 +857,16 @@ async function runMigration(files) {
   plugin.app = { vault: { adapter: adapter } };
   plugin.configPath = QP.CONFIG_NAME;
   const res = await plugin.readPanelConfig();
-  return { res: res, store: store };
+  return { res: res, store: store, written: written };
 }
 
 try {
   const migrated = await runMigration({ '快接面板.json': legacyText });
   ok(Object.prototype.hasOwnProperty.call(migrated.store, '快捷面板.json'), '旧文件名 → 已写出新文件名');
   ok(!Object.prototype.hasOwnProperty.call(migrated.store, '快接面板.json'), '旧文件已移除');
-  eq(migrated.store['快捷面板.json'], legacyText, '迁移是原样复制（内容和字节都没改）');
+  ok(migrated.store['快捷面板.json'].indexOf('editor:toggle-source') >= 0, '改名迁移保留了原条目的 id');
   eq(migrated.res.config.items.length, 1, '迁移后配置照常解析（格子还在）');
-  eq(migrated.res.config.items[0].label, '重载', '格子的 label 保住了');
+  eq(migrated.res.config.items[0].label, '切换源码模式', '格子的 label 保住了');
   ok(migrated.res.notice.indexOf('改名') >= 0, '迁移会给用户一条提示（不静默改名）');
 
   const fresh = await runMigration({});
@@ -857,6 +875,26 @@ try {
 
   const both = await runMigration({ '快捷面板.json': legacyText, '快接面板.json': legacyText });
   ok(Object.prototype.hasOwnProperty.call(both.store, '快接面板.json'), '新名已存在时不迁移、也不碰旧文件（不删用户文件）');
+
+  /* v1 → v2 结构升级 */
+  const upgraded = await runMigration({ '快捷面板.json': stockV1Text });
+  eq(upgraded.res.config.version, 2, 'v1 配置被升级到 v2');
+  eq(upgraded.res.config.items.length, QP.DEMO_ITEMS.length, '还是默认示例的 → 整组换成 v2 的核验命令');
+  ok(
+    upgraded.res.config.items.every((it) => QP.DEMO_ITEMS.some((d) => d.id === it.id)),
+    'v2 默认格子全部来自核验过的命令清单'
+  );
+  ok(upgraded.written.indexOf(QP.CONFIG_NAME) >= 0, '升级结果写回了配置文件（下次不再重复升级）');
+  ok(upgraded.res.notice.indexOf('升级') >= 0, '升级有提示（不静默改用户配置）');
+
+  const customV2 = await runMigration({
+    '快捷面板.json': JSON.stringify({
+      version: 2,
+      items: [{ type: 'command', id: 'editor:toggle-source', label: '我的命令' }],
+      recent: [],
+    }),
+  });
+  eq(customV2.res.config.items[0].label, '我的命令', '已经是 v2 的配置不做任何改动');
 } catch (e) {
   ok(false, '迁移用例抛异常：' + (e && e.message));
 }

@@ -95,19 +95,16 @@ const html = `<!doctype html>
       <div class="modal-close-button">×</div>
       <div class="modal-content">
         <div class="qp-header">
-          <div class="qp-title"><span class="qp-title-text">快捷面板</span><span class="qp-count">6 格 · 1 项待处理</span></div>
+          <div class="qp-title"><span class="qp-title-text">快捷面板</span></div>
           <div class="qp-actions">
-            <button class="qp-icon-btn" type="button">+</button>
             <button class="qp-icon-btn" type="button">⋯</button>
             <button class="qp-icon-btn" type="button">×</button>
           </div>
         </div>
-        <div class="qp-search"><input class="qp-search-input" placeholder="过滤面板（Enter 执行第一格 · Esc 清空）"></div>
         <div class="qp-grid" style="--qp-cols: 6; --qp-cell: 40px">${grid}
         </div>
         <div class="qp-footer">
           <div class="qp-status">1 项命令/文件已找不到</div>
-          <div class="qp-hint">方向键选择 · Enter 执行 · 直接打字过滤 · Esc 关闭</div>
         </div>
       </div>
     </div>
