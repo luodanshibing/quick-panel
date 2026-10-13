@@ -1224,7 +1224,46 @@ try {
     eq(modalCloseCount > 0, true, 'scope Enter 会执行当前高亮格（并关闭面板）');
   }
 
-  /* 面板侧与 app 侧都查不到命令时不许抛错 */
+  /* v0.4.2 三条真机 bug 的回归 */
+  {
+    // ① 右键不能触发命令（否则"右键→改名"会先把命令执行掉）
+    const cellA = clickCell('设置');
+    clickLog.length = 0;
+    cellA.cell.fire('pointerdown', { button: 2 });
+    cellA.cell.fire('pointerup', { button: 2 });
+    cellA.cell.fire('click', { button: 2 });
+    eq(clickLog.filter((x) => x.charAt(0) !== '▸'), [], '右键（button=2）不触发命令');
+    clickLog.length = 0;
+    cellA.modal._lastActivate = 0; // 清掉 600ms 去重（前一步刚点过）
+    cellA.cell.fire('pointerdown', { button: 0 });
+    cellA.cell.fire('pointerup', { button: 0 });
+    ok(clickLog.filter((x) => x.charAt(0) !== '▸').indexOf('app:open-settings') >= 0, '左键（button=0）仍然正常触发');
+
+    // ② 最近用过要显示"已经在面板里"的项（原来只列不在面板里的，导致永远是空的）
+    clickLog.length = 0;
+    const recentModal = new QP.QuickPanelModal(clickApp, clickHost, QP.normalizePanelConfig({
+      version: 2,
+      panel: { showSearch: false, showRecent: true },
+      items: [{ type: 'command', id: 'app:open-settings', label: '设置' }],
+      recent: [{ type: 'command', id: 'app:open-settings', usedAt: 111 }],
+    }), {});
+    recentModal.modalEl = new FakeElement('div');
+    recentModal.modalEl.addClass('modal-container');
+    recentModal.modalEl.addClass('quick-panel');
+    recentModal.contentEl = new FakeElement('div');
+    recentModal.modalEl.appendChild(recentModal.contentEl);
+    recentModal.scope = { register() {} };
+    recentModal.registerDomEvent = () => {};
+    recentModal.onOpen();
+    eq(recentModal.recent.length, 1, '「最近用过」收录面板里已有的项（这是用户报告"始终为空"的原因）');
+    const chips = recentModal.contentEl.querySelector('qp-recent-row').children;
+    ok(chips.length >= 1, '「最近用过」渲染出至少一个 chip');
+    eq(chips[0].getText(), '设置', 'chip 显示与面板一致的显示名');
+
+    // ③ 选择器不许改到面板的标题容器（表现为"面板变两行"）
+    ok(/titleEl\.parentElement\)\s*this\.titleEl\.parentElement\.hide\(\)|titleEl\.parentElement\.hide\(\)/.test(SOURCE), '选择器/确认窗会隐藏共用的标题容器（面板不会变成两行）');
+  }
+
   {
     const bare = new QP.QuickPanelModal(clickApp, clickHost, QP.normalizePanelConfig({
       version: 2,

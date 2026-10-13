@@ -646,12 +646,15 @@ class QuickPanelModal extends Modal {
       this.config.recent.forEach(function (r) {
         const rk = itemKey(r);
         if (!rk) return;
-        // 最近用过的条目在面板里也要能执行；找不到的（命令失效 / 文件被删）不显示
-        if (self.items.some(function (v) { return itemKey(v.item) === rk; })) return;
-        const probe = self.config.items.filter(function (v) { return itemKey(v) === rk; })[0];
-        const entry = { item: probe || r, type: r.type, missing: '' };
-        if (r.type === 'command' && !registry.find(asString(r.id).trim())) entry.missing = 'command';
-        if (r.type !== 'command') {
+        // 全部显示（用户 2026-10-14 反馈："最近用过始终是空的" —— 原因是我原先只列"不在面板里"的项，
+        // 而他常用的命令都在面板上）。面板里已有的项直接复用那份条目，图标/名字与面板一致。
+        const inPanel = self.items.filter(function (v) { return itemKey(v.item) === rk; })[0];
+        const entry = inPanel
+          ? { item: inPanel.item, type: inPanel.type, missing: inPanel.missing }
+          : { item: r, type: r.type, missing: '' };
+        // 面板里已有的项其 missing 状态已算过；这里只补"不在面板里"的那些
+        if (!inPanel && r.type === 'command' && !registry.find(asString(r.id).trim())) entry.missing = 'command';
+        if (!inPanel && r.type !== 'command') {
           const f = self.app.vault.getAbstractFileByPath(normalizeVaultPath(asString(r.path).trim()));
           if (!f) entry.missing = 'file-missing';
         }
@@ -796,7 +799,7 @@ class QuickPanelModal extends Modal {
         btn.addEventListener('click', () => self.executeEntry(entry));
       });
       if (!this.recent.length) {
-        this.recentEl.createSpan({ cls: 'qp-recent-empty', text: '还没有记录' });
+        this.recentEl.createSpan({ cls: 'qp-recent-empty', text: '用过命令后会出现在这里' });
       }
     }
 
@@ -877,10 +880,15 @@ class QuickPanelModal extends Modal {
       this._lastActivate = now;
       run();
     };
-    el.addEventListener('pointerdown', () => {
-      armed = true;
+    const isPrimary = (evt) => !evt || typeof evt.button !== 'number' || evt.button === 0;
+    el.addEventListener('pointerdown', (evt) => {
+      armed = isPrimary(evt);
     });
-    el.addEventListener('pointerup', () => {
+    el.addEventListener('pointerup', (evt) => {
+      if (!isPrimary(evt)) {
+        armed = false;
+        return;
+      }
       if (!armed) return;
       armed = false;
       fire();
@@ -891,7 +899,11 @@ class QuickPanelModal extends Modal {
     el.addEventListener('pointerleave', () => {
       armed = false;
     });
-    el.addEventListener('click', fire);
+    el.addEventListener('click', (evt) => {
+      // 只响应主键：右键/中键要留给菜单，否则"右键 → 改名"会先把命令执行掉
+      if (!isPrimary(evt)) return;
+      fire();
+    });
     return el;
   }
 
@@ -1347,6 +1359,9 @@ class ConfirmLikeModal extends Modal {
   onOpen() {
     this.modalEl.addClass('quick-panel');
     this.modalEl.addClass('qp-confirm');
+    // 同上：共用标题容器，隐藏它（否则会改到面板自己的标题）
+    if (this.titleEl && this.titleEl.parentElement) this.titleEl.parentElement.hide();
+    else if (this.titleEl && this.titleEl.hide) this.titleEl.hide();
     this.contentEl.createDiv({ cls: 'qp-confirm-title', text: this.qpTitle });
     const body = this.contentEl.createDiv({ cls: 'qp-confirm-body' });
     this.lines.forEach((l) => {
@@ -1474,8 +1489,10 @@ class QuickPanelPickerModal extends Modal {
   onOpen() {
     this.modalEl.addClass('quick-panel');
     this.modalEl.addClass('qp-picker');
-    this.contentEl.addClass('quick-panel');
-    this.titleEl.setText('添加格子');
+    // 关键：Obsidian 的 Modal 共用同一个 `.modal-title-container` DOM，写标题会**同时改到面板的标题**，
+    // 表现为"选择器一开，面板变两行"。这里把标题容器直接藏掉。
+    if (this.titleEl && this.titleEl.parentElement) this.titleEl.parentElement.hide();
+    else if (this.titleEl && this.titleEl.hide) this.titleEl.hide();
     const wrap = this.contentEl.createDiv({ cls: 'qp-picker-search' });
     this.inputEl = wrap.createEl('input', {
       cls: 'qp-search-input',
