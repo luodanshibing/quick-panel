@@ -595,7 +595,17 @@ for (const name of reserved) {
 }
 
 /* 样式文件 */
-ok(/\.modal-container\.quick-panel\s*\{/.test(STYLES), 'styles.css 里给面板容器单独定位（不靠默认居中）');
+ok(/\.modal-container\.quick-panel\s*\{/.test(STYLES), 'styles.css 里有面板容器规则');
+const containerRule = (STYLES.match(/\.modal-container\.quick-panel\s*\{[^}]*\}/) || [''])[0];
+ok(/inset:\s*0/.test(containerRule), '容器铺满视口（inset:0）');
+ok(/display:\s*flex/.test(containerRule), '容器 display: flex');
+ok(/align-items:\s*center/.test(containerRule), '容器 align-items: center（垂直居中）');
+ok(/justify-content:\s*center/.test(containerRule), '容器 justify-content: center（水平居中）');
+ok(/transform:\s*none/.test(containerRule), '容器不带 transform（避免叠加 Obsidian 的居中位移）');
+const cardRule = (STYLES.match(/\.quick-panel \.modal,\s*\.modal-container\.qp-confirm \.modal\s*\{[^}]*\}/) || [''])[0];
+ok(/position:\s*relative/.test(cardRule), '卡片 position: relative（作为 flex 项参与居中）');
+ok(!/position:\s*absolute/.test(cardRule), '卡片不再是 absolute（absolute 会被父级 flex 定位二次偏移）');
+ok(/margin:\s*0/.test(cardRule), '卡片 margin 归零');
 ok(/grid-template-columns: repeat\(var\(--qp-cols/.test(STYLES), 'CSS 的列数由 --qp-cols 变量驱动');
 ok(/\.qp-cell[\s\S]{0,400}box-shadow: none/.test(STYLES), '格子按钮强制清掉主题底色/阴影');
 
@@ -785,36 +795,16 @@ try {
   eq(nav2.highlight, 20, '目标行没有这一列就不动（20 已在最后一行，按下仍是 20）');
 
   /*
-   * 定位（用户 2026-10-13 裁定改为"窗口居中"）
-   * 卡片 800x600 / 视口 1200x800 → 居中位置 (200, 100)，卡片比视口大时可能为负，但公式必须恒定。
+   * 定位：v0.1.5 起**完全交给 CSS flex**（JS 不参与定位）。
+   * 这条是三轮真机教训换来的 —— 只要 JS 量尺寸再 translate，就会在不同 DPI / 窗口布局下飘，
+   * 所以这里断言的是"JS 里不许再出现定位代码"，以及"CSS 里必须是 flex 居中"。
    */
-  function placeWith(cardW, cardH, vw = 1200, vh = 800) {
-    const holder = new QP.QuickPanelModal(fakeApp, host, QP.normalizePanelConfig({ items: [], recent: [] }), {});
-    const el = new FakeElement('div');
-    el.addClass('quick-panel');
-    el.addClass('modal');
-    el.getBoundingClientRect = () => ({ left: 0, top: 0, width: cardW, height: cardH, right: cardW, bottom: cardH });
-    holder.modalEl = el;
-    window.innerWidth = vw;
-    window.innerHeight = vh;
-    holder.placeAtMouse();
-    const m = /translate\((-?\d+)px, (-?\d+)px\)/.exec(el.style.transform || '');
-    return m ? { x: Number(m[1]), y: Number(m[2]), left: el.style.left, top: el.style.top } : { x: NaN, y: NaN, left: el.style.left, top: el.style.top };
-  }
-  const centered = placeWith(800, 600);
-  eq(centered.x, (1200 - 800) / 2, '窗口居中：x = (视口宽 − 卡片宽) ÷ 2');
-  eq(centered.y, (800 - 600) / 2, '窗口居中：y = (视口高 − 卡片高) ÷ 2');
-  eq(centered.left, '0px', '位置只用 transform（left 固定 0）');
-  eq(centered.top, '0px', 'top 同理');
-  const centered2 = placeWith(500, 300, 1000, 700);
-  eq(centered2.x, 250, '换一个视口/卡片尺寸仍然居中（1000-500)/2）');
-  eq(centered2.y, 200, '纵坐标同理（(700-300)/2）');
-  const small = placeWith(120, 80, 4000, 2000);
-  eq(small.x, 1940, '超宽视口下仍居中');
-  eq(small.y, 960, '超高视口下仍居中');
-  // 与鼠标无关：连鼠标坐标都不需要传（构造器已不接收 mouse）
+  ok(!/style\.transform/.test(code), 'main.js 不再写任何 transform（定位不靠 JS）');
+  ok(!/placeAtMouse|centerPoint/.test(code), 'main.js 里没有定位函数残留');
+  ok(!/registerDomEvent\(win, 'resize'/.test(code), '不再挂 resize 监听（flex 自动跟随窗口）');
   const holderNoMouse = new QP.QuickPanelModal(fakeApp, host, QP.normalizePanelConfig({ items: [], recent: [] }), {});
-  ok(holderNoMouse.mouse === undefined, '面板不再持有鼠标坐标（居中不依赖鼠标）');
+  ok(holderNoMouse.mouse === undefined, '面板不再持有鼠标坐标');
+  ok(typeof holderNoMouse.getWindow === 'function' && holderNoMouse.getWindow().innerWidth === 1200, 'getWindow() 仍能取到面板所在窗口（诊断用）');
 } catch (e) {
   ok(false, '面板渲染冒烟抛异常：' + (e && e.stack ? e.stack.split('\n').slice(0, 3).join(' | ') : e));
 }

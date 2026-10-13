@@ -1,0 +1,527 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>quick-panel layout preview</title>
+<style>
+  /* 模拟 Obsidian 的默认变量与"用户主题覆盖弹窗几何"的场景 */
+  :root {
+    --background-primary: #ffffff;
+    --background-secondary: #f5f5f5;
+    --background-modifier-border: #dddddd;
+    --background-modifier-hover: #eeeeee;
+    --background-modifier-form-field: #ffffff;
+    --background-modifier-cover: rgba(0, 0, 0, 0.45);
+    --text-normal: #222222;
+    --text-muted: #666666;
+    --text-faint: #999999;
+    --interactive-accent: #7c5cff;
+    --text-on-accent: #ffffff;
+    --layer-modal: 100;
+    --modal-background: var(--background-primary);
+    --modal-border-color: var(--background-modifier-border);
+    --modal-border-width: 1px;
+    --modal-radius: 8px;
+    --size-4-4: 16px;
+  }
+  html, body { margin: 0; height: 100%; background: #e9e9ee; font-family: system-ui, "Microsoft YaHei", sans-serif; }
+  /* 模拟 Obsidian 的核心弹窗规则（我们要覆盖的就是这几条） */
+  .modal-container {
+    display: flex; align-items: center; justify-content: center;
+    position: absolute; top: 0; bottom: 0; inset-inline-start: 0; width: 100%;
+    z-index: var(--layer-modal);
+  }
+  .modal-container .modal { position: relative; }
+  .modal {
+    background-color: var(--modal-background);
+    border-radius: var(--modal-radius);
+    border: var(--modal-border-width) solid var(--modal-border-color);
+    padding: var(--size-4-4);
+    min-height: 100px;
+    width: var(--dialog-width, 100vw);
+    max-width: var(--dialog-max-width, 100vw);
+    max-height: var(--dialog-max-height, 100vh);
+    display: flex; flex-direction: column; overflow: auto;
+  }
+  .modal-bg { position: absolute; top: 0; inset-inline-start: 0; width: 100%; height: 100%; background-color: var(--background-modifier-cover); }
+  .modal-close-button { position: absolute; top: 6px; right: 6px; display: flex; }
+  .modal-content { padding: 0; }
+  button { font: inherit; }
+  /*
+ * Quick Panel（快捷面板）样式
+ *
+ * 三条约束：
+ *  1) 只作用于本插件自己的 DOM（.quick-panel / .qp-*），不碰 Obsidian 全局组件；
+ *  2) 列数由 JS 用 --qp-cols 变量给出（gridColumns 纯函数唯一决定），CSS 不写死列数；
+ *  3) 图案基于 Obsidian 的主题变量，亮/暗主题都跟着走。
+ *
+ * 一个必须重写的默认值：Obsidian 的 .modal-container 用 absolute + 自身 transform: translate(-50%,-50%)
+ * 居中并只包住内容；本面板把容器改成铺满视口的固定定位，居中交给 flex（见下）。
+ */
+
+/* ---------- 面板容器与卡片：交给 CSS 居中，不依赖任何 JS 测量 ---------- */
+
+/*
+ * ⚠️ 三轮真机教训（v0.1.0–v0.1.4）：
+ *   只要用 JS 量视口/卡片再 translate，就会在不同 DPI / 窗口布局下飘（读动画中间态、读到过期尺寸、
+ *   视口尺寸取错都会表现为"位置不对/每次不同"）。最终方案回到 Obsidian 原生弹窗的做法：
+ *   **容器用 flex 居中，卡片只给尺寸** —— 没有任何测量参与，任何主题与显示比例下都稳定。
+ *
+ * 容器要点：去掉 Obsidian 默认的 transform 居中与 absolute（改用 fixed 铺满视口），
+ * 否则容器自己只包住内容，遮罩只盖一角、卡片会被挤出屏幕。
+ */
+.modal-container.quick-panel {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: none;
+  margin: 0;
+  padding: 0;
+  opacity: 1;
+  pointer-events: auto;
+  overflow: hidden;
+}
+
+/* 面板卡片 */
+
+.quick-panel .modal-bg,
+.modal-container.qp-confirm .modal-bg {
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.quick-panel .modal,
+.modal-container.qp-confirm .modal {
+  position: relative;
+  left: auto;
+  top: auto;
+  margin: 0;
+  width: fit-content;
+  height: fit-content;
+  min-width: 300px;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 24px);
+  padding: 0;
+  border-radius: 12px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.quick-panel .modal-close-button {
+  display: none;
+}
+
+/* 面板卡片宽度 = 列数 × 格宽（JS 只写 --qp-width 这一个数字），不让 Obsidian 的 --dialog-width(100vw) 拉伸它 */
+.quick-panel .modal {
+  width: var(--qp-width, 520px);
+}
+
+/* 主题经常给 button 加底色与内阴影；本面板里除 .qp-btn 外一律透明 */
+.quick-panel button,
+.modal-container.qp-confirm button {
+  background: transparent;
+  box-shadow: none;
+}
+
+.modal-container.qp-confirm button.qp-btn {
+  background: var(--interactive-accent);
+}
+
+.modal-container.qp-confirm button.qp-btn.is-ghost {
+  background: transparent;
+}
+
+.quick-panel .modal-content {
+  max-height: min(80vh, 640px);
+  overflow: auto;
+  padding: 10px 12px 8px;
+}
+
+/* ---------- 头部 ---------- */
+
+.qp-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 2px 10px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.qp-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.qp-title-text {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-normal);
+  white-space: nowrap;
+}
+
+.qp-count {
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.qp-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.qp-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.qp-icon-btn:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+/* ---------- 过滤框 ---------- */
+
+.qp-search {
+  padding: 10px 2px 0;
+}
+
+.qp-search-input {
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  font-size: 13px;
+  border-radius: 8px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-modifier-form-field);
+  color: var(--text-normal);
+}
+
+.qp-search-input:focus {
+  outline: none;
+  border-color: var(--interactive-accent);
+}
+
+/* ---------- 图标网格 ---------- */
+
+.qp-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--qp-cols, 6), minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px 2px;
+}
+
+.qp-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  height: auto;
+  min-height: calc(var(--qp-cell, 40px) + 34px);
+  padding: 10px 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-normal);
+  box-shadow: none;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+/* 有些主题给 button 加了底色或高度，这里强制还原 */
+.qp-cell,
+.qp-cell:hover,
+.qp-cell:focus,
+.qp-cell:active {
+  background: transparent;
+  box-shadow: none;
+}
+
+.qp-cell:hover {
+  background: var(--background-modifier-hover);
+}
+
+.qp-cell.is-active {
+  background: var(--background-modifier-hover);
+  border-color: var(--interactive-accent);
+}
+
+.qp-cell.is-missing {
+  opacity: 0.5;
+}
+
+.qp-cell.is-missing .qp-icon svg {
+  filter: grayscale(1);
+}
+
+.qp-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--qp-cell, 40px);
+  height: var(--qp-cell, 40px);
+  color: var(--text-muted);
+}
+
+.qp-cell:hover .qp-icon,
+.qp-cell.is-active .qp-icon {
+  color: var(--text-normal);
+}
+
+.qp-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.qp-icon-img {
+  object-fit: contain;
+  border-radius: 4px;
+}
+
+.qp-icon-emoji {
+  font-size: calc(var(--qp-cell, 40px) * 0.78);
+  line-height: 1;
+}
+
+.qp-cell-label {
+  width: 100%;
+  font-size: 11.5px;
+  line-height: 1.25;
+  text-align: center;
+  color: var(--text-normal);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
+}
+
+.qp-cell.is-missing .qp-cell-label {
+  color: var(--text-faint);
+}
+
+.qp-empty {
+  grid-column: 1 / -1;
+  padding: 18px 8px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-faint);
+  text-align: center;
+}
+
+/* ---------- 最近用过 ---------- */
+
+.qp-recent {
+  padding: 8px 2px 4px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.qp-recent-label {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-bottom: 6px;
+}
+
+.qp-recent-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.qp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.qp-chip:hover {
+  color: var(--text-normal);
+  border-color: var(--interactive-accent);
+}
+
+.qp-chip.is-missing {
+  opacity: 0.5;
+}
+
+.qp-chip .svg-icon {
+  width: 13px;
+  height: 13px;
+}
+
+.qp-recent-empty {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+/* ---------- 底部状态 ---------- */
+
+.qp-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 2px 2px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.qp-status {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-warning, var(--text-muted));
+}
+
+.qp-status.is-empty {
+  display: none;
+}
+
+.qp-hint {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+/* ---------- 确认弹窗（重新绑定等） ---------- */
+
+.modal-container.qp-confirm {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-container.qp-confirm .modal {
+  position: relative;
+  width: min(460px, calc(100vw - 32px));
+}
+
+.qp-confirm .modal-content {
+  padding: 16px 18px 12px;
+}
+
+.qp-confirm-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+.qp-confirm-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.qp-confirm-line {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-normal);
+  word-break: break-all;
+}
+
+.qp-confirm-line.is-muted {
+  color: var(--text-faint);
+}
+
+.qp-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.qp-btn {
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.qp-btn.is-ghost {
+  background: transparent;
+  color: var(--text-muted);
+}
+
+</style></head>
+<body>
+  <div class="modal-container quick-panel" style="--qp-width: 500px">
+    <div class="modal-bg"></div>
+    <div class="modal">
+      <div class="modal-close-button">×</div>
+      <div class="modal-content">
+        <div class="qp-header">
+          <div class="qp-title"><span class="qp-title-text">快捷面板</span><span class="qp-count">6 格 · 1 项待处理</span></div>
+          <div class="qp-actions">
+            <button class="qp-icon-btn" type="button">+</button>
+            <button class="qp-icon-btn" type="button">⋯</button>
+            <button class="qp-icon-btn" type="button">×</button>
+          </div>
+        </div>
+        <div class="qp-search"><input class="qp-search-input" placeholder="过滤面板（Enter 执行第一格 · Esc 清空）"></div>
+        <div class="qp-grid" style="--qp-cols: 6; --qp-cell: 40px">
+      <button class="qp-cell" type="button" title="设置">
+        <div class="qp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/></svg></div>
+        <span class="qp-cell-label">设置</span>
+      </button>
+      <button class="qp-cell" type="button" title="重载应用">
+        <div class="qp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/></svg></div>
+        <span class="qp-cell-label">重载应用</span>
+      </button>
+      <button class="qp-cell" type="button" title="全局搜索">
+        <div class="qp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/></svg></div>
+        <span class="qp-cell-label">全局搜索</span>
+      </button>
+      <button class="qp-cell" type="button" title="关系图谱">
+        <div class="qp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/></svg></div>
+        <span class="qp-cell-label">关系图谱</span>
+      </button>
+      <button class="qp-cell" type="button" title="后退">
+        <div class="qp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/></svg></div>
+        <span class="qp-cell-label">后退</span>
+      </button>
+      <button class="qp-cell" type="button" title="前进">
+        <div class="qp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/></svg></div>
+        <span class="qp-cell-label">前进</span>
+      </button>
+        </div>
+        <div class="qp-footer">
+          <div class="qp-status">1 项命令/文件已找不到</div>
+          <div class="qp-hint">方向键选择 · Enter 执行 · 直接打字过滤 · Esc 关闭</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body></html>

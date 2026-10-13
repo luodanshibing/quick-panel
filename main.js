@@ -563,10 +563,8 @@ class QuickPanelModal extends Modal {
     this.buildFooter();
 
     this.render();
-    this.placeAtMouse();
-    const win = this.getWindow();
-    this.registerDomEvent(win, 'resize', () => this.placeAtMouse());
-    win.setTimeout(() => {
+    // 位置交给 CSS flex 居中：这里不做任何测量、不写任何定位样式
+    this.getWindow().setTimeout(() => {
       if (this.modalEl && this.modalEl.isConnected) this.modalEl.focus();
     }, 0);
     if (this.opts.autoHighlightFirst !== false) this.setHighlight(0);
@@ -691,7 +689,6 @@ class QuickPanelModal extends Modal {
       this.statusEl.toggleClass('is-empty', parts.length === 0);
     }
     this.applyColumnCount();
-    this.placeAtMouse();
   }
 
   /** 列数只在这里改：CSS 变量 + 面板宽度，避免"宽度决定列数、列数又决定宽度"的自我循环 */
@@ -1023,9 +1020,7 @@ class QuickPanelModal extends Modal {
     else menu.showAtPosition({ x: (this.view || window).innerWidth / 2, y: 80 });
   }
 
-  /* ---- 视图与定位 ---- */
-
-  /* ---- 视图与定位 ---- */
+  /* ---- 视图 ---- */
 
   /** 面板所在窗口（主窗口或弹窗）。this.view 存的就是 window，不是 document。 */
   getWindow() {
@@ -1033,59 +1028,14 @@ class QuickPanelModal extends Modal {
   }
 
   /**
-   * 绑定"面板所在的窗口"。主窗口与弹窗（popout）是不同 window ——
-   * 从 this.modalEl.ownerDocument.defaultView 取，取不到才退回全局。
-   * 居中布局只用它拿视口尺寸（不再需要跟踪鼠标）。
+   * 绑定"面板所在的窗口"（主窗口与 popout 是不同 window）。
+   *
+   * 位置**不需要**它：居中完全由 CSS flex 负责（见 styles.css），这里只用于诊断时读视口尺寸。
+   * 这条是三轮真机教训换来的：JS 参与定位就会在不同 DPI / 窗口布局下飘。
    */
   setView(doc) {
     const given = doc || document;
     this.view = (given && given.defaultView) || window;
-  }
-
-  /** 面板目标位置：窗口正中（用户 2026-10-13 裁定：居中比跟鼠标简单可靠） */
-  centerPoint() {
-    const w = this.getWindow();
-    const vw = w.innerWidth || 1280;
-    const vh = w.innerHeight || 800;
-    const rect = this.modalEl ? this.modalEl.getBoundingClientRect() : { width: 0, height: 0 };
-    const width = rect.width || 420; // 只在还没量到尺寸时用于给一个不刺眼的首帧位置
-    const height = rect.height || 200;
-    return { x: Math.round((vw - width) / 2), y: Math.round((vh - height) / 2) };
-  }
-
-  /**
-   * 把面板放在窗口正中（用户已裁定不用跟随鼠标）。
-   *
-   * 仍然坚持"先量再定"：尺寸量不到时**这一帧不定位**，下一帧重量。
-   * 不能省这一步的原因：卡片宽度由列数决定、高度由内容决定，用兜底值算会偏心；
-   * 入场动画期间量到的还是中间态尺寸（styles.css 里已对面板关掉 animation/transition）。
-   */
-  placeAtMouse() {
-    if (!this.modalEl) return;
-    const w = this.getWindow();
-    const vw = w.innerWidth || 1280;
-    const vh = w.innerHeight || 800;
-    if (this.modalEl.style.left !== '0px') this.modalEl.style.left = '0px';
-    if (this.modalEl.style.top !== '0px') this.modalEl.style.top = '0px';
-
-    const rect = this.modalEl.getBoundingClientRect();
-    const width = rect.width;
-    const height = rect.height;
-    if (!width || !height) {
-      if (!this.placeRetried && typeof w.requestAnimationFrame === 'function') {
-        this.placeRetried = true;
-        w.requestAnimationFrame(() => {
-          this.placeRetried = false;
-          this.placeAtMouse();
-        });
-      }
-      if (!this.modalEl.style.transform) {
-        this.modalEl.style.transform = 'translate(' + Math.round(vw / 2 - 260) + 'px, ' + Math.round(vh / 2 - 140) + 'px)';
-      }
-      return;
-    }
-    const point = this.centerPoint();
-    this.modalEl.style.transform = 'translate(' + point.x + 'px, ' + point.y + 'px)';
   }
 }
 

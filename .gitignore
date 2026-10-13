@@ -6,6 +6,9 @@ build/
 # Obsidian plugin runtime state (settings live in the vault, not in the repo)
 data.json
 
+# visual-check.mjs 的临时产出：截图用的 Edge profile（体积大、无意义），只保留 PNG/HTML
+tools/preview/edge-profile/
+
 # OS / editor noise
 Thumbs.db
 desktop.ini

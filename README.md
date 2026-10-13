@@ -2,13 +2,11 @@
 
 An icon grid that one hotkey away — pin the commands and notes you actually use onto a panel that appears where your mouse is, so you don't have to memorise hotkeys or type search queries.
 
-> Status: **v0.1.4 — batch 1 of 3 (panel + execute + icons)**. Working today: the panel, keyboard/mouse execution, icons from three sources, live config file, broken-item detection. Coming next: add-a-tile from inside the panel, tile context menu, file/folder tiles, import/export. See *Roadmap* below.
+> Status: **v0.1.5 — batch 1 of 3 (panel + execute + icons)**. Working today: the panel, keyboard/mouse execution, icons from three sources, live config file, broken-item detection. Coming next: add-a-tile from inside the panel, tile context menu, file/folder tiles, import/export. See *Roadmap* below.
 >
-> **v0.1.4 — the panel is now simply centered.** Following the mouse turned out to be the source of "wrong place, different place every time", so per the owner's call the panel opens **centered in the window**; drag-to-move and all mouse tracking were removed with it. The position is still computed from the *measured* card rect, so it is exact and stable.
+> **v0.1.5 — centering is now pure CSS** (`display:flex; align-items:center; justify-content:center` on the modal container, card `position: relative`). No JavaScript measurement, no `transform`, no resize listener: this is how Obsidian's own modals are centered, so it is immune to DPI and window-layout differences. `tools/visual-check.mjs` renders the real `styles.css` against a stand-in DOM and screenshots it with headless Edge — the panel measures dead-centre (card 350–850 × 285–515 in a 1200×800 frame).
 >
-> **v0.1.3** renamed the panel to **快捷面板** (the earlier build wrote 快接面板). Your config file is **renamed automatically on first load** — the old `快接面板.json` is copied to `快捷面板.json` and then removed, content untouched.
->
-> **v0.1.1 fixed a display bug found on first run**: the modal container lost its viewport size (the whole screen dimmed while the panel was pushed off-screen, leaving a white sliver in the corner), and the card's `top` clamp let it overflow the bottom edge. If the panel still looks wrong, run the command **导出面板诊断（排查显示问题用）** — it writes the real geometry to `.quick-panel-diag.txt` in the vault root.
+> **v0.1.4** removed drag-to-move and all mouse tracking; **v0.1.3** renamed the panel to **快捷面板** and renamed your config file automatically (`快接面板.json` → `快捷面板.json`, content untouched); **v0.1.1** fixed the container losing its viewport size. If the panel ever looks wrong, run **导出面板诊断（排查显示问题用）** — it writes the real geometry to `.quick-panel-diag.txt` in the vault root.
 
 ## What it is
 
@@ -119,13 +117,11 @@ MIT — see [LICENSE](LICENSE).
 
 一个快捷键呼出的**图标网格面板**：把你真正在用的命令、笔记、文件夹钉在眼前，不用记快捷键，也不用打字搜索。
 
-> 状态：**v0.1.4 —— 三批里的第 1 批（面板 + 执行 + 图标）**。现在能用的：面板本体、键盘/鼠标执行、三种图标来源、库内配置文件实时生效、失效项检测。下一批：面板内即时添加、格子右键菜单；再下一批：文件/文件夹项打磨与导入导出。
+> 状态：**v0.1.5 —— 三批里的第 1 批（面板 + 执行 + 图标）**。现在能用的：面板本体、键盘/鼠标执行、三种图标来源、库内配置文件实时生效、失效项检测。下一批：面板内即时添加、格子右键菜单；再下一批：文件/文件夹项打磨与导入导出。
 >
-> **v0.1.4 —— 面板改为直接居中。** "跟随鼠标"正是"位置不对、每次还不一样"的来源，按你的裁定改成**在窗口正中显示**；拖拽移动与整套鼠标跟踪一并删掉。位置仍按**实测的卡片尺寸**计算，所以是精确且稳定的。
+> **v0.1.5 —— 居中改由纯 CSS 负责**（容器 `display:flex + align-items/justify-content: center`，卡片 `position: relative`）。JS 不参与定位、不写 `transform`、不挂 resize 监听：这就是 Obsidian 自己弹窗的居中方式，因此不受 DPI 与窗口布局影响。`tools/visual-check.mjs` 会用**真实 styles.css** 拼等价 DOM 并无头 Edge 截图 —— 1200×800 下面板卡片实测落在正中（350–850 × 285–515）。
 >
-> **v0.1.3** 把面板名改成 **快捷面板**（早先那版写成了「快接面板」）。你的配置文件**首次加载时会自动改名**：旧的 `快接面板.json` 原样复制成 `快捷面板.json` 后删除，内容一字不改。
->
-> **v0.1.1 修的是第一次实测暴露的显示 bug**：容器丢掉视口尺寸（结果整屏变暗、面板被挤出屏幕、只在角上留一块白条），以及卡片靠 `top` 钳位导致底边溢出。若显示仍不对，跑命令 **导出面板诊断（排查显示问题用）**，它会把真实几何写进库根 `.quick-panel-diag.txt`。
+> **v0.1.4** 删掉了拖拽与整套鼠标跟踪；**v0.1.3** 把面板名改成 **快捷面板** 并自动改配置文件名（`快接面板.json` → `快捷面板.json`，内容一字不改）；**v0.1.1** 修了容器丢视口尺寸。若显示仍不对，跑命令 **导出面板诊断（排查显示问题用）**，它会把真实几何写进库根 `.quick-panel-diag.txt`。
 
 ## 它是什么
 
