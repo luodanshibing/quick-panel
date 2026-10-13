@@ -29,6 +29,8 @@ const failures = [];
  * `const { Notice } = require('obsidian')` 解构的，之后再换 stub 上的字段已经改不到它。
  */
 const noticeSink = { record: false, items: [] };
+/** 记录"弹出了几个 Modal"（确认窗断言用；StubModal.open 里自增） */
+let modalOpenCount = 0;
 class NoticeStub {
   constructor(message) {
     if (noticeSink.record) noticeSink.items.push(String(message));
@@ -234,7 +236,9 @@ class StubModal {
     this.modalEl = {};
     this.contentEl = {};
   }
-  open() {}
+  open() {
+    modalOpenCount += 1;
+  }
   close() {}
 }
 class StubPlugin {
@@ -979,8 +983,7 @@ const clickApp = {
   commands: {
     listCommands: () => SMOKE_COMMANDS.slice(),
     findCommand: (id) => SMOKE_COMMANDS.find((c) => c.id === id),
-    executeCommandById: (id) => {
-      clickLog.push(id);
+    executeCommandById: (id) => {      clickLog.push(id);
       const cmd = SMOKE_COMMANDS.find((c) => c.id === id);
       if (!cmd) return false;
       // 照 obsidian.asar 的语义：找到命令就返回 true；命令内部抛错被吞掉
@@ -996,7 +999,7 @@ const clickApp = {
 };
 
 // Notice 桩：把提示记下来（断言"不静默"用）
-class CountingNotice {
+    class CountingNotice {
   constructor(msg) {
     clickNotices.push(String(msg));
   }
@@ -1126,6 +1129,64 @@ try {
   const h = clickCell('设置');
   h.cell.fire('pointerup');
   eq(h.log.filter((x) => x === 'app:open-settings').length, 1, 'pointerup 与 click 都到达时只执行一次（400ms 去重）');
+  /* 命中真机根因的回归：面板的 listCommands 过滤掉了这条命令，但 app.findCommand 能拿到 */
+  {
+    const modal2 = new QP.QuickPanelModal(clickApp, clickHost, QP.normalizePanelConfig({
+      version: 2,
+      panel: { showSearch: false, showRecent: false },
+      items: [{ type: 'command', id: 'app:open-settings', label: '设置' }],
+      recent: [],
+    }), {});
+    modal2.modalEl = new FakeElement('div');
+    modal2.modalEl.addClass('modal-container');
+    modal2.modalEl.addClass('quick-panel');
+    modal2.contentEl = new FakeElement('div');
+    modal2.modalEl.appendChild(modal2.contentEl);
+    modal2.scope = { register() {} };
+    modal2.registerDomEvent = () => {};
+    // 面板注册表里查不到（模拟 listCommands 的 checkCallback 过滤），app 里有
+    modal2.host = Object.assign({}, clickHost, {
+      commandRegistry: () => ({ all: [], find: () => undefined, findByName: () => undefined, invalidate() {} }),
+    });
+    clickLog.length = 0;
+    let threw2 = null;
+    try {
+      await modal2.runCommand({ type: 'command', id: 'app:open-settings', label: '设置' });
+    } catch (e) {
+      threw2 = e;
+    }
+    eq(threw2, null, 'listCommands 过滤掉的命令不该让点击抛错');
+    ok(clickLog.indexOf('app:open-settings') >= 0, '这种情况仍会执行命令（直接问 app.commands.findCommand）——这正是"点了没反应"的修复点');
+  }
+
+  /* 面板侧与 app 侧都查不到时不许抛错 */
+  {
+    const bare = new QP.QuickPanelModal(clickApp, clickHost, QP.normalizePanelConfig({
+      version: 2,
+      panel: { showSearch: false, showRecent: false },
+      items: [{ type: 'command', id: 'app:open-settings', label: '设置' }],
+      recent: [],
+    }), {});
+    bare.modalEl = new FakeElement('div');
+    bare.modalEl.addClass('modal-container');
+    bare.modalEl.addClass('quick-panel');
+    bare.contentEl = new FakeElement('div');
+    bare.modalEl.appendChild(bare.contentEl);
+    bare.scope = { register() {} };
+    bare.registerDomEvent = () => {};
+    // 两边都查不到（模拟 listCommands 的 checkCallback 过滤 + app 里也没有）
+    bare.app = Object.assign({}, clickApp, { commands: Object.assign({}, clickApp.commands, { findCommand: () => undefined }) });
+    bare.host = Object.assign({}, clickHost, {
+      commandRegistry: () => ({ all: [], find: () => undefined, findByName: () => undefined, invalidate() {} }),
+    });
+    let threw = null;
+    try {
+      await bare.runCommand({ type: 'command', id: 'missing:cmd', label: '不存在的命令' });
+    } catch (e) {
+      threw = e;
+    }
+    eq(threw, null, '两边都查不到时 runCommand 不抛异常（而不是静默崩掉）');
+  }
 } catch (err) {
   ok(false, '点击链路用例抛异常：' + (err && err.message));
 }

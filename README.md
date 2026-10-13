@@ -2,14 +2,17 @@
 
 An icon grid that one hotkey away — pin the commands and notes you actually use onto a panel that appears where your mouse is, so you don't have to memorise hotkeys or type search queries.
 
-> Status: **v0.2.0 — batch 1 of 3 (panel + execute + icons)**. Working today: the panel, keyboard/mouse execution, icons from three sources, live config file, broken-item detection. Coming next: add-a-tile from inside the panel, tile context menu, file/folder tiles, import/export. See *Roadmap* below.
+> Status: **v0.3.0 — batch 1 of 3 (panel + execute + icons)**. Working today: the panel, keyboard/mouse execution, icons from three sources, live config file, broken-item detection. Coming next: add-a-tile from inside the panel, tile context menu, file/folder tiles, import/export. See *Roadmap* below.
 >
-> **v0.2.0** — three fixes after real-machine feedback:
-> 1. **No × anywhere** (as requested). The native close button *is* a child of `.modal` (`obsidian.asar`: `this.modalEl.createDiv("modal-close-button mod-raised")`), so the descendant selector `.quick-panel .modal .modal-close-button` is the correct one — my earlier `>` variant was pointing at a different, listener-less implementation and therefore never hid it. My own header × was removed too. Close with `Esc` or by clicking outside the panel.
-> 2. **Tiles fire on press-and-release**, not on `click`: `pointerdown` arms the tile, `pointerup` on the same tile runs it, `click` kept only as a programmatic/keyboard fallback with 600 ms de-duplication. A `click` is not delivered when the element is repainted/re-attached between mousedown and mouseup, which is the most likely reason clicks did nothing on the real machine.
-> 3. **The diagnostic command now always produces output** — it tries `adapter.write` → `vault.modify/create` → a direct `fs.writeFileSync` on the vault root, and tells you which path worked; if all three fail it prints the content to the console (never silent). Every tile press is logged as `▸ 点击 …`, so the file can distinguish "the click never reached the panel" from "the command did not run".
+> **v0.3.0 — the "clicking a tile does nothing" bug is finally explained and fixed.** Root cause, in one line of Obsidian's own source: `listCommands()` is **filtered by `checkCallback`** —
+> ```js
+> listCommands() { return Object.values(this.commands).filter(c => !c.checkCallback || c.checkCallback(true)) }
+> ```
+> so any command whose `checkCallback` returns falsy in the current context is missing from the list. The panel resolved tiles against that filtered list, so such a tile hit the "command not found" branch and the click appeared to do nothing. Tiles now resolve the command **directly via `app.commands.findCommand(id)`** (the unfiltered table) and only fall back to the panel's own index; if both miss, you get a dialog instead of silence.
 >
-> Earlier: **v0.1.6** fixed the execute path (`executeCommandById`'s return value is useless for judging success) and removed the counter/`hint`/filter box; **v0.1.5** made centering pure CSS; **v0.1.4** removed drag and mouse tracking; **v0.1.3** renamed the panel to **快捷面板** and renamed your config file automatically.
+> Also in v0.3.0: the click path is now **straight-line** — focus the editor if the command needs one, call `executeCommandById` **while the panel is still open** (exactly what the command palette does), then update the recent list. The previous "close panel → write recent file → `setTimeout` → call" chain had three places to swallow a failure (and Obsidian can throttle timers); it is gone, and the recent list is now written 1 s after the click instead of on the click path.
+>
+> **v0.2.1** added `▸ 点击 / → 调用命令 / ← 返回` logging to the diagnostic file; **v0.2.0** removed every ×, made tiles fire on press-and-release, and gave the diagnostic command three write fallbacks; **v0.1.6** fixed the `executeCommandById` return-value misuse; **v0.1.5** made centering pure CSS; **v0.1.3** renamed the panel to **快捷面板** and renamed your config file automatically.
 
 ## What it is
 
@@ -120,14 +123,17 @@ MIT — see [LICENSE](LICENSE).
 
 一个快捷键呼出的**图标网格面板**：把你真正在用的命令、笔记、文件夹钉在眼前，不用记快捷键，也不用打字搜索。
 
-> 状态：**v0.2.0 —— 三批里的第 1 批（面板 + 执行 + 图标）**。现在能用的：面板本体、键盘/鼠标执行、三种图标来源、库内配置文件实时生效、失效项检测。下一批：面板内即时添加、格子右键菜单；再下一批：文件/文件夹项打磨与导入导出。
+> 状态：**v0.3.0 —— 三批里的第 1 批（面板 + 执行 + 图标）**。现在能用的：面板本体、键盘/鼠标执行、三种图标来源、库内配置文件实时生效、失效项检测。下一批：面板内即时添加、格子右键菜单；再下一批：文件/文件夹项打磨与导入导出。
 >
-> **v0.2.0 —— 按真机反馈改三处：**
-> 1. **一个 × 都不留**（按你的要求）。原生关闭按钮**确实是 `.modal` 的子元素**（`obsidian.asar`：`this.modalEl.createDiv("modal-close-button mod-raised")`），所以正确的选择器是后代选择器 `.quick-panel .modal .modal-close-button` —— 我上一条写的 `>` 变体指向的是另一处实现、根本没监听，所以没盖住。我自己那个头部 × 也删了。关闭方式：`Esc` 或点面板外任意处。
-> 2. **格子改为"按下+松开"触发**，不再依赖 `click`：`pointerdown` 记下按在哪个格子、`pointerup` 若仍在同一格就执行，`click` 只留作程序化/键盘兜底（600ms 去重）。元素在 mousedown 与 mouseup 之间被重绘/重挂时浏览器不补发 `click`，这正是真机上"点了没反应"最可能的原因。
-> 3. **诊断命令现在一定会产出**：依次尝试 `adapter.write` → `vault.modify/create` → 直接 `fs.writeFileSync` 写库根，并告知用的是哪条路；三条都失败才退回控制台（绝不静默）。每次点格子都会记一条 `▸ 点击 …`，所以诊断文件能区分"点击没到面板"与"命令没跑"。
+> **v0.3.0 —— "点格子没反应"找到根因并修掉了。** 根因就是 Obsidian 自己的一行源码：`listCommands()` **按 `checkCallback` 过滤**——
+> ```js
+> listCommands() { return Object.values(this.commands).filter(c => !c.checkCallback || c.checkCallback(true)) }
+> ```
+> 当前上下文不满足的命令不在这个列表里。面板原先拿它做解析，于是这些格子走进"命令找不到了"分支，表现就是点了毫无反应。现在**直接问 `app.commands.findCommand(id)`**（未过滤的完整命令表），面板自己的索引只作兜底；两边都没有则弹窗告知，不再静默。
 >
-> 更早：**v0.1.6** 修了执行链（`executeCommandById` 的返回值不能用来判断成败）并去掉计数/提示小字/过滤框；**v0.1.5** 居中改纯 CSS；**v0.1.4** 去掉拖拽与鼠标跟踪；**v0.1.3** 面板改名 **快捷面板** 并自动改配置文件名。
+> 同时把点击路径拉成**直线**：需要编辑器的先聚焦 → **面板开着就直接调用 `executeCommandById`**（与命令面板完全同一条路）→ 再更新最近使用。原来"关面板 → 写最近记录 → `setTimeout` → 再调用"这条链有三处可能吞掉失败（Obsidian 还会节流定时器），已整段删除；最近使用改为点击后 1 秒再落盘，点击路径上不做文件 I/O。
+>
+> **v0.2.1** 给诊断文件加了 `▸ 点击 / → 调用命令 / ← 返回` 日志；**v0.2.0** 去掉所有 ×、格子改为按下+松开触发、诊断命令三重落盘；**v0.1.6** 修了 `executeCommandById` 返回值误用；**v0.1.5** 居中改纯 CSS；**v0.1.3** 面板改名 **快捷面板** 并自动改配置文件名。
 
 ## 它是什么
 

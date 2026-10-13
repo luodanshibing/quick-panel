@@ -879,6 +879,26 @@ class QuickPanelModal extends Modal {
 
   /* ---- 执行 ---- */
 
+  /**
+   * 取命令对象：**优先直接问 app**（`app.commands.findCommand`，完整的命令表），
+   * 面板自己那份注册表只作兜底。
+   *
+   * ⚠️ 这是"点了没反应"的根因（2026-10-13 真机复现）：面板的注册表来自 `app.commands.listCommands()`，
+   *   而官方源码里 `listCommands()` 是**按 checkCallback 过滤过的**：
+   *     `Object.values(this.commands).filter(c => !c.checkCallback || c.checkCallback(!0))`
+   *   —— 上下文不满足的命令（例如需要活动编辑器、需要特定视图）不会出现在里面。
+   *   于是"格子有命令、但 find 不到" → 走进"命令找不到了"分支 → 表现为点了完全没反应。
+   */
+  commandFor(id) {
+    const key = asString(id).trim();
+    if (!key) return undefined;
+    const direct = this.app && this.app.commands && typeof this.app.commands.findCommand === 'function'
+      ? this.app.commands.findCommand(key)
+      : undefined;
+    if (direct) return direct;
+    return this.host.commandRegistry().find(key);
+  }
+
   async executeEntry(entry) {
     if (!entry) return;
     // 点击日志：进诊断文件。若"点了没反应"，这条能立刻区分"点击根本没到"与"命令没跑"
@@ -891,11 +911,11 @@ class QuickPanelModal extends Modal {
     return undefined;
   }
 
-  /** 执行命令：先查在不在 → 面板先关 → 需要编辑器的先聚焦 → 执行 → 失败一律出声 */
+  /** 执行命令：先取到命令对象（问 app，不靠过滤过的列表）→ 需要编辑器的先聚焦 → 直接调用 */
   async runCommand(item) {
     const id = asString(item.id).trim();
     const registry = this.host.commandRegistry();
-    const cmd = registry.find(id);
+    const cmd = this.commandFor(id);
     if (!cmd) {
       const snapshot = cleanLabel(item.nameSnapshot) || cleanLabel(item.label) || id;
       const guess = registry.findByName(snapshot);
@@ -930,19 +950,28 @@ class QuickPanelModal extends Modal {
 
     const needsEditor = typeof cmd.editorCallback === 'function' || typeof cmd.editorCheckCallback === 'function';
     const editor = this.app.workspace.activeEditor;
-    const win = this.getWindow();
-    this.silentClose();
-    this.host.touchRecent(item);
-    win.setTimeout(function () {
-      if (needsEditor && editor && typeof editor.focus === 'function') {
-        try {
-          editor.focus();
-        } catch (e) {
-          /* 聚焦失败不致命，继续执行；真正的失败提示在 host.runCommandById 里给 */
-        }
+    // 用户 2026-10-13 定的方向：**不关面板、不用定时器，直接调用**。
+    // 原先"关面板 → 写最近记录 → setTimeout → 再调用"这条链上任何一步出错都会停在调用之前
+    // （Obsidian 里 setTimeout 还可能被节流），这与 Ctrl+P 的做法也不一致 —— 命令面板就是直接调。
+    if (needsEditor && editor && typeof editor.focus === 'function') {
+      try {
+        editor.focus();
+      } catch (e) {
+        this.host.logExecution('! 聚焦失败：' + ((e && e.message) || e));
       }
+    }
+    try {
       this.host.runCommandById(id, cmd);
-    }.bind(this), needsEditor ? EXEC_DELAY_MS : 0);
+    } catch (e) {
+      this.host.logExecution('✗ 调用命令时抛错：' + ((e && e.message) || e));
+      new Notice('执行「' + id + '」时出错：' + ((e && e.message) || e), 10000);
+    }
+    // 最近使用改成"只更新内存里的顺序、面板重绘时顺带写盘"，不再在点击路径上写文件
+    try {
+      this.host.touchRecent(item);
+    } catch (e) {
+      /* 最近使用失败不影响执行 */
+    }
     return undefined;
   }
 
@@ -1387,20 +1416,6 @@ class QuickPanelPlugin extends Plugin {
       new Notice('「' + label + '」需要先打开一个笔记才能执行', 8000);
       return false;
     }
-    // 防"点了没反应"：同一条命令短时间内再点一次 → 明确告诉用户它没跑起来，别再点了
-    const now = Date.now();
-    this._lastRun = this._lastRun || {};
-    const last = this._lastRun[id];
-    this._lastRun[id] = now;
-    if (last && now - last < 1200) {
-      new Notice(
-        '「' + label + '」好像没有反应。它可能需要在特定上下文里运行 —— 请用 Ctrl+P 命令面板执行，' +
-          '或右键这个格子重新绑定到别的命令。',
-        10000
-      );
-      this.logExecution(label + '(重复点击→已提示)');
-      return false;
-    }
     // 记录"命令真的被调用了"（诊断文件里用它区分"点击没到面板""命令没跑""命令跑了但无可见反馈"）
     this.logExecution('→ 调用命令 ' + id + '（' + label + '）');
     let result;
@@ -1545,7 +1560,16 @@ class QuickPanelPlugin extends Plugin {
       if (entry.type === 'command') entry.id = asString(item.id).trim();
       else entry.path = normalizeVaultPath(asString(item.path).trim());
       this.config.recent = pushRecent(this.config.recent, entry, RECENT_LIMIT);
-      this.savePanelConfig(this.config);
+      // 落盘延后 1 秒：点击路径上不做文件 I/O（同步盘锁文件时写入会拖慢甚至失败）
+      if (this._recentTimer) clearTimeout(this._recentTimer);
+      this._recentTimer = setTimeout(() => {
+        this._recentTimer = null;
+        try {
+          this.writePanelConfig(this.config, { silent: true });
+        } catch (e) {
+          /* 最近记录失败不影响使用 */
+        }
+      }, 1000);
     } catch (e) {
       /* 最近记录失败不影响使用 */
     }
