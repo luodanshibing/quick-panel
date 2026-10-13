@@ -406,6 +406,11 @@
   background: var(--background-modifier-hover);
 }
 
+/* 图标名在本机不存在：文字变淡提示"它不会显示图标" */
+.qp-picker-item.is-no-icon .qp-picker-label {
+  color: var(--text-faint);
+}
+
 .qp-picker-icon {
   width: 18px;
   height: 18px;

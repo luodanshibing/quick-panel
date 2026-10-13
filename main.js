@@ -59,28 +59,36 @@ const MAX_PANEL_WIDTH = 720;
 
 /**
  * 兜底图标候选清单。
- * 运行期优先用 Obsidian 的 getIconIds()（实测本机 1.x 是顶层导出）；
- * 这个清单只在拿不到该 API 时顶上（交接文档指出官方未承诺它有、也没有文档化的「列全部图标名」API）。
+ * 运行期优先用 `getIconIds()`（本机实测为顶层导出，返回 `lucide-<规范名>` + 运行时注册名 + 内联 SVG 名）；
+ * 这份清单只在拿不到该 API 时顶上。
+ *
+ * ⚠️ 2026-10-14 取证（`obsidian.asar`）：内置 Lucide 表 441 个键**全部是带连字符的新名**
+ * （`settings-2` / `house` / `user-round`…），而 `settings` / `search` / `folder` / `link` / `plus`
+ * 这类短名是**别名**；Obsidian 自己的代码里也在用这些短名（asar 里有 232 处 `lucide-*` 引用，
+ * 含 `lucide-settings` 等）。所以两种写法都要留着 —— 下面的名字都取自 Obsidian 自己的引用，不用猜。
  */
 const LUCIDE_CANDIDATES = [
-  'activity', 'alarm-clock', 'archive', 'arrow-left-right', 'at-sign', 'award',
-  'book', 'book-open', 'bookmark', 'box', 'brain', 'brush', 'bug', 'calculator',
-  'calendar', 'calendar-days', 'check', 'check-square', 'circle-dot', 'clipboard',
-  'clipboard-list', 'clock', 'cloud', 'code', 'coffee', 'columns', 'command',
-  'compass', 'copy', 'corner-down-right', 'cpu', 'credit-card', 'database', 'download',
-  'edit', 'edit-3', 'external-link', 'eye', 'file', 'file-text', 'file-plus',
-  'files', 'filter', 'flame', 'folder', 'folder-open', 'frown', 'gauge', 'gift',
-  'git-branch', 'globe', 'graduation-cap', 'grid', 'hammer', 'hard-drive', 'hash',
-  'heart', 'help-circle', 'home', 'image', 'inbox', 'info', 'kanban', 'key',
-  'languages', 'layout', 'layout-grid', 'library', 'lightbulb', 'link', 'list',
-  'list-checks', 'loader', 'lock', 'map', 'message-square', 'message-square-text',
-  'mic', 'minus', 'monitor', 'moon', 'more-horizontal', 'mouse-pointer', 'move',
-  'music', 'navigation', 'package', 'palette', 'paperclip', 'pen-tool', 'pie-chart',
-  'pin', 'plus', 'puzzle', 'quote', 'refresh-cw', 'repeat', 'rocket', 'rss',
-  'save', 'scissors', 'scroll', 'search', 'settings', 'share-2', 'shield', 'shuffle',
-  'slash', 'sliders-horizontal', 'sort-asc', 'sparkles', 'square', 'star', 'sun',
-  'table', 'tag', 'target', 'terminal', 'text', 'trash', 'trending-up', 'type',
-  'undo', 'upload', 'user', 'wand', 'wrench', 'x', 'zap',
+  'settings', 'settings-2', 'search', 'search-alert', 'folder', 'folder-open', 'folder-plus',
+  'folder-closed', 'link', 'link-2', 'plus', 'files', 'file', 'file-text', 'file-plus',
+  'x', 'check', 'trash-2', 'edit', 'edit-3', 'undo', 'eye', 'eye-off', 'sun', 'moon',
+  'star', 'house', 'zap', 'image', 'image-off', 'list', 'layers', 'pin', 'pin-off',
+  'arrow-left', 'arrow-right', 'arrow-up', 'arrow-down', 'arrow-up-right', 'chevron-left',
+  'chevron-right', 'chevron-down', 'chevron-up', 'chevrons-up-down', 'chevrons-down-up',
+  'more-horizontal', 'more-vertical', 'refresh-cw', 'refresh-cw-off', 'alert-triangle',
+  'info', 'help-circle', 'clipboard', 'clipboard-list', 'clipboard-check', 'sort-asc',
+  'sort-desc', 'separator-vertical', 'separator-horizontal', 'square-dashed', 'gallery-vertical',
+  'picture-in-picture', 'ghost', 'unlink', 'lock', 'unlock', 'shield', 'keyboard',
+  'monitor', 'smartphone', 'printer', 'hard-drive', 'cpu', 'database', 'server', 'cloud',
+  'globe', 'wifi', 'battery', 'plug', 'power', 'terminal', 'code', 'braces', 'bug',
+  'wrench', 'hammer', 'puzzle', 'package', 'box', 'archive', 'inbox', 'send', 'mail',
+  'message-square-text', 'bell', 'user', 'users', 'briefcase', 'graduation-cap',
+  'book-open', 'library', 'lightbulb', 'target', 'trophy', 'flag', 'map-pin', 'compass',
+  'navigation', 'rocket', 'calculator', 'ruler', 'pencil', 'pen-tool', 'brush', 'palette',
+  'camera', 'music', 'video', 'mic', 'headphones', 'activity', 'gauge', 'trending-up',
+  'table', 'layout-grid', 'columns-3', 'filter', 'tag', 'bookmark', 'heart', 'clock',
+  'calendar', 'circle-check', 'circle-alert', 'minus-circle', 'plus-circle', 'external-link',
+  'git-branch', 'git-merge', 'git-pull-request', 'workflow', 'recycle', 'download', 'upload',
+  'share', 'trash', 'select-all-text', 'restore-file-glyph',
 ];
 
 /**
@@ -911,6 +919,12 @@ class QuickPanelModal extends Modal {
     const box = parent.createDiv({ cls: 'qp-icon' });
     const name = spec.kind === 'lucide' ? spec.value : DEFAULT_ICON;
     setIcon(box, name);
+    // 图标名不存在时 setIcon 会静默什么都不画 —— 这里检测一次并落到默认图标 + 说明（不静默空白）
+    const drawn = box.querySelector ? box.querySelector('svg') : null;
+    if (!drawn && name !== DEFAULT_ICON) {
+      setIcon(box, DEFAULT_ICON);
+      box.setAttribute('title', '图标名「' + name + '」在本机 Obsidian 里不存在（已用默认图标）');
+    }
     if (spec.kind === 'none' && spec.reason) box.setAttribute('title', spec.reason);
   }
 
@@ -1418,13 +1432,14 @@ class IconSuggestModal extends SuggestModal {
   }
 }
 
-/** 图标候选：过滤掉 emoji 之类不能作为图标名的项，并去重排序 */
+/** 图标候选：剥掉 `lucide-` 前缀（setIcon 两种都认，但显示与写入用短名）、去重、排序 */
 function modalIconCandidates(runtimeNames) {
   const seen = Object.create(null);
   const out = [];
   const push = (v) => {
-    const name = asString(v).trim();
+    const name = stripLucidePrefix(asString(v).trim());
     if (!name || seen[name]) return;
+    // 只保留"像图标名"的：字母数字加连字符（emoji、含空格的名字都会落到图标缺失的回退路径，不进候选）
     if (!/^[a-z0-9][a-z0-9-]*$/i.test(name)) return;
     seen[name] = 1;
     out.push(name);
@@ -1434,7 +1449,7 @@ function modalIconCandidates(runtimeNames) {
   return out.sort();
 }
 
-const DEFAULT_ICON = 'circle-dot';
+const DEFAULT_ICON = 'file-text';
 
 /**
  * 「添加格子」选择器：命令 + 库内文件 + 文件夹，可打字过滤，方向键选择，Enter 加入。
@@ -1510,6 +1525,11 @@ class QuickPanelPickerModal extends Modal {
         setIcon(box, iconName);
       } catch (e) {
         /* 图标名不合法就留空 */
+      }
+      // 名字在本机不存在时 setIcon 什么都不画：标出来，免得用户选了一个不会显示的名字
+      if (box.querySelector && !box.querySelector('svg')) {
+        row.addClass('is-no-icon');
+        row.setAttribute('title', '这一项的图标名「' + iconName + '」在本机不存在（不影响添加）');
       }
       const text = row.createDiv({ cls: 'qp-picker-text' });
       text.createSpan({ cls: 'qp-picker-label', text: it.label || it.id || it.path });
