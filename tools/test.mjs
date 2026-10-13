@@ -1014,8 +1014,9 @@ try {
   });
   eq(customV2.res.config.items[0].label, '我的命令', '已经是 v2 的配置不做任何改动');
 
-  /* v2 但还开着过滤框（用户反馈"去掉过滤框"）→ 随加载就地改掉 */
-  const stillHasSearch = await runMigration({
+  /* 用户手动打开的过滤框**不得被加载路径清掉**（v0.5.3：旧迁移会把刚打开的开关改回 false，
+     表现为"显示过滤框设置无效"） */
+  const searchKept = await runMigration({
     '快捷面板.json': JSON.stringify({
       version: 2,
       panel: { columns: 'auto', showRecent: true, iconSize: 40, showSearch: true },
@@ -1023,9 +1024,21 @@ try {
       recent: [],
     }),
   });
-  eq(stillHasSearch.res.config.panel.showSearch, false, 'v2 里残留的 showSearch=true 会被就地关掉');
-  ok(stillHasSearch.written.indexOf(QP.CONFIG_NAME) >= 0, '改完写回文件（下次打开不再显示过滤框）');
-  eq(stillHasSearch.res.config.items[0].label, '我的命令', '只改这一个开关，用户的格子一个都不动');
+  eq(searchKept.res.config.panel.showSearch, true, '用户打开的「显示过滤框」在重新加载后依然保持开启');
+  eq(searchKept.written.indexOf(QP.CONFIG_NAME), -1, '加载路径不再改写用户的显示设置（没有多余写盘）');
+  eq(searchKept.res.config.items[0].label, '我的命令', '其它字段不受影响');
+  ok(!/showSearch === true/.test(SOURCE), '源码里不再有"showSearch 强制改回 false"的迁移');
+
+  /* 未过滤命令表判断失效：listCommands 里没有、但 app.findCommand 能拿到的命令不算失效 */
+  const notMissing = QP.findMissingItems(
+    [{ type: 'command', id: 'simple-heading:apply' }],
+    {
+      findCommand: (id) => (id === 'simple-heading:apply' ? { id: id } : undefined),
+      getAbstractFileByPath: () => null,
+    }
+  );
+  eq(notMissing.length, 0, '只在编辑器上下文可用的命令不会被误标为"已失效"');
+  ok(/findCommand: \(id\) => this\.commandFor\(id\) \|\| registry\.find\(id\)/.test(SOURCE), '面板解析失效项时用的是未过滤的完整命令表');
 } catch (e) {
   ok(false, '迁移用例抛异常：' + (e && e.message));
 }

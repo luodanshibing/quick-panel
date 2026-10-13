@@ -625,7 +625,7 @@ class QuickPanelModal extends Modal {
     // 解析命令表只发生在「面板打开」这一刻（启动零扫描）
     const registry = this.host.commandRegistry();
     const missing = findMissingItems(this.config.items, {
-      findCommand: registry.find,
+      findCommand: (id) => this.commandFor(id) || registry.find(id),
       getAbstractFileByPath: (p) => this.app.vault.getAbstractFileByPath(p),
       isFolder: (f) => !!f && f.children !== undefined,
     });
@@ -1985,22 +1985,11 @@ class QuickPanelPlugin extends Plugin {
           '已把面板升级到 v' + CONFIG_VERSION + '：默认格子换成核验过的核心命令（旧示例里的"关系图谱/后退/前进"依赖上下文，点了不一定会执行）。',
       };
     }
-    // v2 之后又追加过一条口径（用户反馈"面板里不该有搜索框"）：随加载就地改掉，不用等下次升级
-    if (parsed.panel && parsed.panel.showSearch === true) {
-      const trimmed = normalizePanelConfig({
-        version: CONFIG_VERSION,
-        panel: Object.assign({}, parsed.panel, { showSearch: false }),
-        items: parsed.items,
-        recent: parsed.recent,
-      });
-      this.config = trimmed;
-      try {
-        await this.writePanelConfig(trimmed, { silent: true });
-      } catch (e) {
-        /* 写不进去也不影响本次使用 */
-      }
-      return { config: trimmed, fromDisk: true, notice: renameNotice };
-    }
+    /*
+     * ⚠️ 这里**曾经**有一句"随加载把 showSearch 改回 false"的迁移（当初用户说面板里不要过滤框）。
+     * 现在过滤框是设置里的正式开关（默认 false），任何加载期强制改写都会让用户的设置"看起来没生效"。
+     * 结论：默认值只写在 `normalizePanelSettings` 里，**加载路径不得再改写用户已保存的显示项**。
+     */
     return { config: parsed, fromDisk: true, notice: renameNotice };
   }
 
@@ -2417,14 +2406,20 @@ class QuickPanelPlugin extends Plugin {
 
   /** 打开设置面板（从面板的 ⋯ → 设置进入）。设置改动就地生效，不重开弹窗 */
   openSettings() {
+    // 防重复打开：菜单项若被触发两次，会出现两个设置弹窗（实测截图里就是"叠一层"）
+    if (this._settingsOpen) return;
+    this._settingsOpen = true;
     const modal = this.modal;
     const off = this.onConfigChanged(() => {
+      // 立即同步内存配置，并让面板就地重建（不新开弹窗）
+      if (modal) modal.config = this.config;
       if (modal && modal.rebuild) modal.rebuild();
     });
     const settings = new QuickPanelSettingsModal(this.app, this);
-    settings.onClosed = function () {
+    settings.onClosed = () => {
+      this._settingsOpen = false;
       off();
-      // 关闭设置时只重建一次面板（不是每改一项就重开）
+      // 关闭设置时只重建一次面板
       if (modal && modal.rebuild) modal.rebuild();
     };
     settings.open();
@@ -2476,6 +2471,16 @@ class QuickPanelPlugin extends Plugin {
   /* ---- 面板 ---- */
 
   openPanel() {
+    // 防重复：同一时刻只允许一个面板。已经开着就先关掉再开（否则快捷键连按会叠出多个面板）
+    if (this.modal) {
+      try {
+        const old = this.modal;
+        this.modal = null;
+        old.close();
+      } catch (e) {
+        /* 关旧的失败也继续 */
+      }
+    }
     // 每次打开都重读配置：用户可能在编辑器里刚改过 JSON
     this.readPanelConfig().then((loaded) => {
       this.config = loaded.config;
