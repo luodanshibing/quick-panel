@@ -1401,13 +1401,17 @@ class QuickPanelPlugin extends Plugin {
       this.logExecution(label + '(重复点击→已提示)');
       return false;
     }
+    // 记录"命令真的被调用了"（诊断文件里用它区分"点击没到面板""命令没跑""命令跑了但无可见反馈"）
+    this.logExecution('→ 调用命令 ' + id + '（' + label + '）');
     let result;
     try {
       result = this.app.commands.executeCommandById(id);
     } catch (e) {
+      this.logExecution('✗ 抛出异常 ' + id + '：' + ((e && e.message) || e));
       new Notice('执行「' + label + '」出错：' + ((e && e.message) || e), 10000);
       return false;
     }
+    this.logExecution('← 返回 ' + (result && typeof result.then === 'function' ? 'Promise' : String(result)) + '（' + id + '）');
     // 异步类命令：把 Promise 的拒绝也变成可见提示（否则就是一个静默的 unhandled rejection）
     if (result && typeof result.then === 'function') {
       result.then(
