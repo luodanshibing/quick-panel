@@ -31,6 +31,8 @@ const failures = [];
 const noticeSink = { record: false, items: [] };
 /** 记录"弹出了几个 Modal"（确认窗断言用；StubModal.open 里自增） */
 let modalOpenCount = 0;
+/** 记录"关了几次弹窗"（"执行后关闭面板"断言用；StubModal.close 里自增） */
+let modalCloseCount = 0;
 class NoticeStub {
   constructor(message) {
     if (noticeSink.record) noticeSink.items.push(String(message));
@@ -239,7 +241,9 @@ class StubModal {
   open() {
     modalOpenCount += 1;
   }
-  close() {}
+  close() {
+    modalCloseCount += 1;
+  }
 }
 class StubPlugin {
   constructor(app, manifest) {
@@ -1066,7 +1070,17 @@ function clickCell(label) {
   if (!target) return { found: false };
   target.click();
   const execLog = clickLog.filter((x) => x.charAt(0) !== '▸');
-  return { found: true, log: execLog, all: clickLog.slice(), notices: clickNoticeItems(), closed: modal.closed, cell: target };
+  return { found: true, log: execLog, all: clickLog.slice(), notices: clickNoticeItems(), closed: modal.closed, cell: target, modal: modal };
+}
+
+/** 与点击同一条代码路径，但等待执行链走完（用于断言"执行后是否关闭面板"这类时序结果） */
+async function clickCellAndWait(label) {
+  const r = clickCell(label);
+  if (!r.found) return r;
+  // 点击链内部是 async 的（executeEntry → runCommand）：这里把同一入口再 await 一次拿到最终状态
+  const entry = r.modal.items.find((v) => r.modal.displayName(v.item) === label);
+  if (entry) await r.modal.executeEntry(entry);
+  return { found: true, log: clickLog.filter((x) => x.charAt(0) !== '▸'), notices: clickNoticeItems(), closed: r.modal.closed };
 }
 
 /** 只有 pointerup、没有 click（模拟 click 事件没送达的真机情况） */
@@ -1159,7 +1173,58 @@ try {
     ok(clickLog.indexOf('app:open-settings') >= 0, '这种情况仍会执行命令（直接问 app.commands.findCommand）——这正是"点了没反应"的修复点');
   }
 
-  /* 面板侧与 app 侧都查不到时不许抛错 */
+  /* v0.3.1：执行后必须关闭面板；键盘走 Scope（否则方向键有高亮不走、Enter 会点中聚焦按钮） */
+  {
+    modalCloseCount = 0;
+    const ran = await clickCellAndWait('设置');
+    ok(modalCloseCount > 0, '执行命令时面板会被关闭（用户要求：不关会挡住命令界面）');
+
+    const scopeKeys = [];
+    const modal3 = new QP.QuickPanelModal(clickApp, clickHost, QP.normalizePanelConfig({
+      version: 2,
+      panel: { showSearch: false, showRecent: false },
+      items: [
+        { type: 'command', id: 'app:open-settings', label: '设置' },
+        { type: 'command', id: 'global-search:open', label: '搜索' },
+        { type: 'command', id: 'app:reload', label: '重载' },
+      ],
+      recent: [],
+    }), {});
+    modal3.modalEl = new FakeElement('div');
+    modal3.modalEl.addClass('modal-container');
+    modal3.modalEl.addClass('quick-panel');
+    modal3.contentEl = new FakeElement('div');
+    modal3.modalEl.appendChild(modal3.contentEl);
+    // scope 桩：把注册的键记下来，用于断言"方向键真的挂到了 Scope 上"
+    const handlers = {};
+    modal3.scope = {
+      register: (mods, key, fn) => {
+        scopeKeys.push(key);
+        handlers[key] = fn;
+        return { scope: modal3.scope, key: key };
+      },
+    };
+    modal3.registerDomEvent = () => {};
+    modal3.onOpen();
+    ok(scopeKeys.indexOf('ArrowRight') >= 0 && scopeKeys.indexOf('ArrowDown') >= 0, '方向键注册到了 Modal 的 scope（这是真机上方向键不动的原因）');
+    ok(scopeKeys.indexOf('Enter') >= 0, 'Enter 也注册到 scope（否则会被浏览器当成"点了当前聚焦的按钮"）');
+    ok(scopeKeys.indexOf('Escape') < 0, '不抢 Escape（由 Modal 基类关闭弹窗）');
+
+    modal3.setHighlight(0);
+    handlers['ArrowRight']({});
+    eq(modal3.highlight, 1, '通过 scope 的右方向键能移动高亮');
+    handlers['ArrowDown']({});
+    eq(modal3.highlight, 1, '只有一行时 scope 下方向键不越界（3 格 < 9 列）');
+    handlers['End']({});
+    eq(modal3.highlight, modal3.visible.length - 1, 'scope End 跳最后一格');
+    handlers['Home']({});
+    eq(modal3.highlight, 0, 'scope Home 跳第一格');
+    modalCloseCount = 0;
+    handlers['Enter']({});
+    eq(modalCloseCount > 0, true, 'scope Enter 会执行当前高亮格（并关闭面板）');
+  }
+
+  /* 面板侧与 app 侧都查不到命令时不许抛错 */
   {
     const bare = new QP.QuickPanelModal(clickApp, clickHost, QP.normalizePanelConfig({
       version: 2,

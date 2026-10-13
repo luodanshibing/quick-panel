@@ -2,17 +2,13 @@
 
 An icon grid that one hotkey away — pin the commands and notes you actually use onto a panel that appears where your mouse is, so you don't have to memorise hotkeys or type search queries.
 
-> Status: **v0.3.0 — batch 1 of 3 (panel + execute + icons)**. Working today: the panel, keyboard/mouse execution, icons from three sources, live config file, broken-item detection. Coming next: add-a-tile from inside the panel, tile context menu, file/folder tiles, import/export. See *Roadmap* below.
+> Status: **v0.3.1 — batch 1 of 3 (panel + execute + icons)**. Working today: the panel, keyboard/mouse execution, icons from three sources, live config file, broken-item detection. Coming next: add-a-tile from inside the panel, tile context menu, file/folder tiles, import/export. See *Roadmap* below.
 >
-> **v0.3.0 — the "clicking a tile does nothing" bug is finally explained and fixed.** Root cause, in one line of Obsidian's own source: `listCommands()` is **filtered by `checkCallback`** —
-> ```js
-> listCommands() { return Object.values(this.commands).filter(c => !c.checkCallback || c.checkCallback(true)) }
-> ```
-> so any command whose `checkCallback` returns falsy in the current context is missing from the list. The panel resolved tiles against that filtered list, so such a tile hit the "command not found" branch and the click appeared to do nothing. Tiles now resolve the command **directly via `app.commands.findCommand(id)`** (the unfiltered table) and only fall back to the panel's own index; if both miss, you get a dialog instead of silence.
+> **v0.3.1**
+> * **Keyboard now goes through Obsidian's `Scope`** (same mechanism the command palette uses). Inside a modal, key events hit the modal's scope *before* the DOM — my handlers were only bound to the modal element, so the arrow keys had no handler (no highlight movement) and `Enter` fell through to the browser, which activated whatever button had focus (that is why Enter opened the ⋯ menu). `ArrowUp/Down/Left/Right`, `Home`, `End` and `Enter` are now registered on the modal's own scope; `Escape` is left to the base class.
+> * **The panel closes as soon as a tile runs** (you asked for this: leaving it open obstructs the UI the command creates and causes strange states). Closing is synchronous — no timer — and the command is invoked right after, in line with how the command palette works.
 >
-> Also in v0.3.0: the click path is now **straight-line** — focus the editor if the command needs one, call `executeCommandById` **while the panel is still open** (exactly what the command palette does), then update the recent list. The previous "close panel → write recent file → `setTimeout` → call" chain had three places to swallow a failure (and Obsidian can throttle timers); it is gone, and the recent list is now written 1 s after the click instead of on the click path.
->
-> **v0.2.1** added `▸ 点击 / → 调用命令 / ← 返回` logging to the diagnostic file; **v0.2.0** removed every ×, made tiles fire on press-and-release, and gave the diagnostic command three write fallbacks; **v0.1.6** fixed the `executeCommandById` return-value misuse; **v0.1.5** made centering pure CSS; **v0.1.3** renamed the panel to **快捷面板** and renamed your config file automatically.
+> **v0.3.0** found the root cause of "clicking does nothing": `listCommands()` is filtered by `checkCallback`, so context-dependent commands were missing from the panel's index; tiles now resolve commands via `app.commands.findCommand(id)` (the unfiltered table). **v0.2.0** removed every ×, made tiles fire on press-and-release, and gave the diagnostic command three write fallbacks; **v0.1.6** fixed the `executeCommandById` return-value misuse; **v0.1.5** made centering pure CSS; **v0.1.3** renamed the panel to **快捷面板**.
 
 ## What it is
 
@@ -123,17 +119,13 @@ MIT — see [LICENSE](LICENSE).
 
 一个快捷键呼出的**图标网格面板**：把你真正在用的命令、笔记、文件夹钉在眼前，不用记快捷键，也不用打字搜索。
 
-> 状态：**v0.3.0 —— 三批里的第 1 批（面板 + 执行 + 图标）**。现在能用的：面板本体、键盘/鼠标执行、三种图标来源、库内配置文件实时生效、失效项检测。下一批：面板内即时添加、格子右键菜单；再下一批：文件/文件夹项打磨与导入导出。
+> 状态：**v0.3.1 —— 三批里的第 1 批（面板 + 执行 + 图标）**。现在能用的：面板本体、键盘/鼠标执行、三种图标来源、库内配置文件实时生效、失效项检测。下一批：面板内即时添加、格子右键菜单；再下一批：文件/文件夹项打磨与导入导出。
 >
-> **v0.3.0 —— "点格子没反应"找到根因并修掉了。** 根因就是 Obsidian 自己的一行源码：`listCommands()` **按 `checkCallback` 过滤**——
-> ```js
-> listCommands() { return Object.values(this.commands).filter(c => !c.checkCallback || c.checkCallback(true)) }
-> ```
-> 当前上下文不满足的命令不在这个列表里。面板原先拿它做解析，于是这些格子走进"命令找不到了"分支，表现就是点了毫无反应。现在**直接问 `app.commands.findCommand(id)`**（未过滤的完整命令表），面板自己的索引只作兜底；两边都没有则弹窗告知，不再静默。
+> **v0.3.1**
+> * **键盘改走 Obsidian 的 `Scope`**（与命令面板同一套机制）。弹窗里的按键是**先过 Scope、再到 DOM**；我原来只把处理器挂在弹窗元素上，所以方向键根本没人处理（高亮不动），`Enter` 则落给浏览器去"激活当前聚焦的按钮"（这就是为什么 Enter 打开了 ⋯ 菜单）。现在 `ArrowUp/Down/Left/Right`、`Home`、`End`、`Enter` 都注册在弹窗自己的 scope 上，`Escape` 留给基类。
+> * **执行命令时立即关闭面板**（按你的要求：面板常开会挡住命令产生的界面，造成"奇怪现象"）。关闭是**同步**的、不用定时器，紧接着就调用命令 —— 与命令面板的做法一致。
 >
-> 同时把点击路径拉成**直线**：需要编辑器的先聚焦 → **面板开着就直接调用 `executeCommandById`**（与命令面板完全同一条路）→ 再更新最近使用。原来"关面板 → 写最近记录 → `setTimeout` → 再调用"这条链有三处可能吞掉失败（Obsidian 还会节流定时器），已整段删除；最近使用改为点击后 1 秒再落盘，点击路径上不做文件 I/O。
->
-> **v0.2.1** 给诊断文件加了 `▸ 点击 / → 调用命令 / ← 返回` 日志；**v0.2.0** 去掉所有 ×、格子改为按下+松开触发、诊断命令三重落盘；**v0.1.6** 修了 `executeCommandById` 返回值误用；**v0.1.5** 居中改纯 CSS；**v0.1.3** 面板改名 **快捷面板** 并自动改配置文件名。
+> **v0.3.0** 找到"点了没反应"的根因：`listCommands()` 按 `checkCallback` 过滤，上下文相关的命令不在面板索引里；现在解析格子直接走 `app.commands.findCommand(id)`（未过滤的完整表）。**v0.2.0** 去掉所有 ×、格子改为按下+松开触发、诊断命令三重落盘；**v0.1.6** 修了 `executeCommandById` 返回值误用；**v0.1.5** 居中改纯 CSS；**v0.1.3** 面板改名 **快捷面板**。
 
 ## 它是什么
 

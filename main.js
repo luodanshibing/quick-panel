@@ -572,10 +572,35 @@ class QuickPanelModal extends Modal {
 
     this.render();
     // 位置交给 CSS flex 居中：这里不做任何测量、不写任何定位样式
-    this.getWindow().setTimeout(() => {
+    const win = this.getWindow();
+    // 键盘走 Obsidian 的 Scope（与命令面板同一套）：弹窗里按键**先过 Scope 再到 DOM**，
+    // 只挂 onKeyDown 的话方向键没人处理、Enter 会被浏览器当成"按了当前聚焦的按钮"（实测会打开 ⋯ 菜单）。
+    this.registerKeys();
+    win.setTimeout(() => {
       if (this.modalEl && this.modalEl.isConnected) this.modalEl.focus();
     }, 0);
     if (this.opts.autoHighlightFirst !== false) this.setHighlight(0);
+  }
+
+  /** 把面板用到的键注册到 Modal 自带的 scope 上（Escape 由基类处理，这里不抢） */
+  registerKeys() {
+    const scope = this.scope;
+    if (!scope || typeof scope.register !== 'function') return;
+    this._scopeHandles = this._scopeHandles || [];
+    const bind = (key, fn) => {
+      const h = scope.register([], key, (evt) => {
+        const handled = fn(evt);
+        return handled === false ? true : false; // 返回 true = 已消费（阻止继续冒泡到 DOM）
+      });
+      this._scopeHandles.push(h);
+    };
+    ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'Enter'].forEach((key) => {
+      bind(key, (evt) => {
+        this.onKeyDown({ key: key, target: { tagName: 'DIV' }, preventDefault() {}, stopPropagation() {} });
+        void evt;
+        return true;
+      });
+    });
   }
 
   onClose() {
@@ -950,9 +975,15 @@ class QuickPanelModal extends Modal {
 
     const needsEditor = typeof cmd.editorCallback === 'function' || typeof cmd.editorCheckCallback === 'function';
     const editor = this.app.workspace.activeEditor;
-    // 用户 2026-10-13 定的方向：**不关面板、不用定时器，直接调用**。
-    // 原先"关面板 → 写最近记录 → setTimeout → 再调用"这条链上任何一步出错都会停在调用之前
-    // （Obsidian 里 setTimeout 还可能被节流），这与 Ctrl+P 的做法也不一致 —— 命令面板就是直接调。
+    // 用户 2026-10-13 定稿：**执行后必须把面板关掉**（面板常开会挡住命令产生的界面、造成"奇怪现象"），
+    // 但执行本身要**直接、同步**（官方 executeCommand 就是同步的），不用定时器 —— 曾经的
+    // "关面板 → 写最近记录 → setTimeout → 再调用"那条链有三处会吞错，还会被 Obsidian 节流。
+    try {
+      this.silentClose();
+      this.host.logExecution('… 已关闭面板，准备执行 ' + id);
+    } catch (e) {
+      this.host.logExecution('✗ 关闭面板抛错：' + ((e && e.message) || e));
+    }
     if (needsEditor && editor && typeof editor.focus === 'function') {
       try {
         editor.focus();
@@ -966,7 +997,7 @@ class QuickPanelModal extends Modal {
       this.host.logExecution('✗ 调用命令时抛错：' + ((e && e.message) || e));
       new Notice('执行「' + id + '」时出错：' + ((e && e.message) || e), 10000);
     }
-    // 最近使用改成"只更新内存里的顺序、面板重绘时顺带写盘"，不再在点击路径上写文件
+    // 最近使用只更新内存 + 延后落盘，点击路径上不做文件 I/O
     try {
       this.host.touchRecent(item);
     } catch (e) {
