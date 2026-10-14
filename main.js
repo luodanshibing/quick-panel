@@ -1416,43 +1416,28 @@ class QuickPanelModal extends Modal {
    * 换图标：一个输入框 + 常用图标名提示。
    *
    * ⚠️ v0.4.3 之前这里用 `SuggestModal` 并调了 `this.setPlaceholder(...)` —— 那是 `InputSuggest`
-   *   的方法，`SuggestModal` 上不存在 → 抛异常，"换图标"点了毫无反应。现已改为普通输入框弹窗
-   *   （与"改名"同一条已验证的路径），并把图标名候选放进提示与建议按钮里。
+   *   的方法，`SuggestModal` 上不存在 → 抛异常，"换图标"点了毫无反应。
+   *
+   * 用户 2026-10-14 反馈：「我并不知道库里有什么图标名字，最好可以模糊匹配，即时出现预览，
+   * 而不是非要拼写正确」→ 改为**图标选择器**：默认就把全部图标画成网格（所见即所得，不用背名字），
+   * 打字时**模糊过滤**（支持乱序/跳字命中，也支持中文别名如"设置""搜索"），方向键 + 回车选择。
    */
   promptIcon(item) {
     const self = this;
     const current = asString(item.icon).trim();
-    const names = modalIconCandidates(this.host.iconNames());
-    const quick = names.slice(0, 6);
-    const modal = new ConfirmLikeModal(
+    const picker = new QuickPanelIconPickerModal(
       this.app,
-      '换图标',
-      [
-        { label: '图标名、emoji 或库内图片路径', muted: true },
-        { label: '常用：' + quick.join('、'), muted: true },
-      ],
-      [
-        {
-          label: '保存',
-          onClick: function () {
-            const value = modal.getInputValue();
-            self.host.updateItem(item, { icon: value });
-            new Notice(cleanLabel(value) ? '已改图标：' + value : '已清空图标，将用默认图标');
-            self.host.reopen();
-          },
+      {
+        names: modalIconCandidates(this.host.iconNames()),
+        current: current,
+        onChoose: function (value) {
+          self.host.updateItem(item, { icon: value });
+          new Notice(cleanLabel(value) ? '已改图标：' + value : '已清空图标，将用默认图标');
+          self.host.reopen();
         },
-        {
-          label: '用默认图标',
-          onClick: function () {
-            self.host.updateItem(item, { icon: '' });
-            new Notice('已清空图标，将用默认图标');
-            self.host.reopen();
-          },
-        },
-      ]
+      }
     );
-    modal.addInput({ value: current, placeholder: '图标名 / emoji / 图片路径', preview: true });
-    modal.open();
+    picker.open();
   }
 
   /** 「更多」菜单：只留必要项，说明性括号全部去掉（用户 2026-10-14：不做冗余文案） */
@@ -1634,6 +1619,347 @@ class IconSuggestModal extends SuggestModal {
 
   onChooseSuggestion(name) {
     if (typeof this.onChoose === 'function') this.onChoose(asString(name));
+  }
+}
+
+/**
+ * 图标名称的中文别名（用户 2026-10-14：「我并不知道库里有什么图标名字」）。
+ * 有它就能打中文找到对应图标 —— 只列常用语义，命中不到时仍可靠网格浏览。
+ */
+const ICON_ALIASES = {
+  设置: ['settings', 'settings-2', 'sliders-horizontal', 'wrench'],
+  搜索: ['search', 'search-alert', 'magnifying-glass'],
+  查找: ['search', 'search-alert'],
+  文件夹: ['folder', 'folder-open', 'folder-plus', 'folder-closed'],
+  目录: ['folder', 'folder-open', 'list'],
+  文件: ['file', 'file-text', 'files', 'file-plus'],
+  文档: ['file-text', 'files', 'book-open'],
+  笔记: ['file-text', 'notebook', 'book-open', 'pencil'],
+  链接: ['link', 'link-2', 'external-link', 'unlink'],
+  标签: ['tag', 'tags', 'bookmark'],
+  收藏: ['star', 'bookmark', 'heart'],
+  星标: ['star', 'bookmark'],
+  首页: ['house', 'home'],
+  主页: ['house', 'home'],
+  日历: ['calendar', 'calendar-days', 'calendar-check'],
+  日期: ['calendar', 'calendar-check'],
+  时间: ['clock', 'timer', 'alarm-clock'],
+  时钟: ['clock', 'timer'],
+  待办: ['check', 'check-square', 'list-checks', 'clipboard-check'],
+  清单: ['list', 'list-checks', 'clipboard-list'],
+  任务: ['check', 'clipboard-check', 'target'],
+  图片: ['image', 'image-off', 'camera', 'gallery-vertical'],
+  照片: ['image', 'camera'],
+  头像: ['user', 'users', 'circle-user'],
+  用户: ['user', 'users'],
+  刷新: ['refresh-cw', 'refresh-cw-off', 'rotate-cw'],
+  同步: ['refresh-cw', 'sync', 'repeat'],
+  重载: ['refresh-cw', 'rotate-cw'],
+  齿轮: ['settings', 'settings-2', 'cog'],
+  工具: ['wrench', 'hammer', 'settings'],
+  命令: ['terminal', 'code', 'square-terminal'],
+  代码: ['code', 'braces', 'terminal'],
+  终端: ['terminal', 'square-terminal'],
+  新增: ['plus', 'plus-circle', 'file-plus', 'folder-plus'],
+  添加: ['plus', 'plus-circle'],
+  删除: ['trash', 'trash-2', 'x'],
+  关闭: ['x', 'x-circle', 'circle-x'],
+  确认: ['check', 'circle-check', 'check-circle'],
+  警告: ['alert-triangle', 'circle-alert', 'alert-circle'],
+  提示: ['info', 'lightbulb', 'circle-help'],
+  帮助: ['circle-help', 'help-circle', 'info'],
+  下载: ['download', 'hard-drive-download'],
+  上传: ['upload', 'cloud-upload'],
+  分享: ['share', 'share-2', 'send'],
+  发送: ['send', 'mail'],
+  邮件: ['mail', 'at-sign'],
+  消息: ['message-square', 'message-square-text', 'bell'],
+  通知: ['bell', 'bell-ring'],
+  锁: ['lock', 'lock-keyhole', 'unlock'],
+  安全: ['shield', 'shield-check', 'lock'],
+  眼睛: ['eye', 'eye-off'],
+  显示: ['eye', 'monitor'],
+  隐藏: ['eye-off', 'ghost'],
+  太阳: ['sun', 'sun-medium', 'sunrise'],
+  月亮: ['moon', 'moon-star'],
+  亮色: ['sun', 'lightbulb'],
+  暗色: ['moon', 'cloud-moon'],
+  闪电: ['zap', 'zap-off', 'activity'],
+  图标: ['image', 'shapes', 'star'],
+  网格: ['layout-grid', 'grid-2x2', 'grid-3x3'],
+  布局: ['layout-grid', 'layout-list', 'layout-dashboard'],
+  列表: ['list', 'layout-list', 'list-ordered'],
+  表格: ['table', 'table-2', 'grid-2x2'],
+  图表: ['chart-no-axes-column', 'trending-up', 'pie-chart'],
+  统计: ['chart-no-axes-column', 'trending-up', 'activity'],
+  图: ['image', 'chart-no-axes-column', 'network'],
+  书: ['book', 'book-open', 'bookmark', 'notebook'],
+  阅读: ['book-open', 'notebook', 'glasses'],
+  音乐: ['music', 'headphones', 'audio-lines'],
+  视频: ['video', 'play', 'monitor-play'],
+  相机: ['camera', 'video'],
+  麦克风: ['mic', 'mic-off'],
+  键盘: ['keyboard', 'command'],
+  电脑: ['monitor', 'laptop', 'cpu'],
+  手机: ['smartphone', 'tablet'],
+  云: ['cloud', 'cloud-upload', 'cloud-download'],
+  网络: ['globe', 'wifi', 'network'],
+  地球: ['globe', 'earth'],
+  地图: ['map', 'map-pin', 'navigation', 'compass'],
+  位置: ['map-pin', 'navigation', 'locate'],
+  导航: ['navigation', 'compass', 'route'],
+  火箭: ['rocket', 'send'],
+  火: ['flame', 'flame-kindling'],
+  心: ['heart', 'heart-handshake'],
+  奖励: ['trophy', 'award', 'medal'],
+  目标: ['target', 'goal', 'crosshair'],
+  旗: ['flag', 'flag-triangle-right'],
+  灯泡: ['lightbulb', 'zap'],
+  想法: ['lightbulb', 'brain', 'message-square-text'],
+  书签: ['bookmark', 'book-marked'],
+  归档: ['archive', 'package', 'box'],
+  打包: ['package', 'box', 'archive'],
+  收件: ['inbox', 'mail'],
+  包裹: ['package', 'box'],
+  拼图: ['puzzle', 'blocks'],
+  插件: ['puzzle', 'blocks', 'plug'],
+  电源: ['power', 'plug', 'battery'],
+  电池: ['battery', 'battery-charging'],
+  打印: ['printer', 'file-text'],
+  计算: ['calculator', 'sigma'],
+  笔: ['pencil', 'pen-tool', 'edit'],
+  编辑: ['pencil', 'edit', 'file-pen'],
+  画笔: ['brush', 'paintbrush', 'palette'],
+  调色: ['palette', 'paintbrush'],
+  复制: ['copy', 'clipboard', 'files'],
+  剪贴: ['clipboard', 'clipboard-list', 'clipboard-check'],
+  移动: ['move', 'arrows-up-down-left-right'],
+  拖拽: ['move', 'grip-vertical'],
+  放大: ['zoom-in', 'search', 'maximize'],
+  缩小: ['zoom-out', 'minimize'],
+  全屏: ['maximize', 'expand', 'fullscreen'],
+  箭头: ['arrow-right', 'arrow-left', 'arrow-up', 'arrow-down'],
+  向上: ['arrow-up', 'chevron-up', 'arrow-up-circle'],
+  向下: ['arrow-down', 'chevron-down', 'arrow-down-circle'],
+  向左: ['arrow-left', 'chevron-left', 'arrow-left-circle'],
+  向右: ['arrow-right', 'chevron-right', 'arrow-right-circle'],
+  排序: ['sort-asc', 'sort-desc', 'arrow-up-down'],
+  过滤: ['filter', 'funnel', 'list-filter'],
+  筛选: ['filter', 'funnel'],
+  更多: ['more-horizontal', 'more-vertical', 'ellipsis'],
+  菜单: ['menu', 'more-horizontal', 'align-justify'],
+};
+
+/**
+ * 模糊匹配：返回匹配分（0 = 不匹配，越大越靠前）。
+ * 规则（按优先级）：
+ *   ① 前缀子串（`sett` → `settings`）最高分，越短越高；
+ *   ② 中间子串（`text` → `file-text`）次之；
+ *   ③ 跳字命中（`stg` → `settings`）：按顺序出现即可，越紧凑分越高；
+ *   ④ **忽略连字符再匹配一次**（`tf` → `file-text`）—— 图标名里的 `-` 最容易把缩写绊住；
+ *   ⑤ 中文别名（见 `ICON_ALIASES`）在 `filterIconNames` 里另外加分。
+ */
+function subsequenceScore(hay, q) {
+  let i = 0;
+  let span = 0;
+  let last = -1;
+  for (const ch of q) {
+    const found = hay.indexOf(ch, i);
+    if (found < 0) return 0;
+    if (last >= 0) span += found - last - 1;
+    last = found;
+    i = found + 1;
+  }
+  return 400 - span * 8 - hay.length * 0.1;
+}
+
+function iconMatchScore(name, query) {
+  const n = asString(name).toLowerCase();
+  const q = asString(query).trim().toLowerCase();
+  if (!q) return 1;
+  if (!n) return 0;
+  const at = n.indexOf(q);
+  if (at === 0) return 1000 - n.length;
+  if (at > 0) return 700 - at * 2 - n.length * 0.1;
+  const direct = subsequenceScore(n, q);
+  if (direct > 0) return direct;
+  // 把连字符去掉再试（图标名普遍带 `-`，用户的缩写往往跨过它，如 tf → file-text）
+  const flat = n.replace(/-/g, '');
+  if (flat === n) return 0;
+  const flatHit = flat.indexOf(q);
+  if (flatHit === 0) return 620 - flat.length;
+  if (flatHit > 0) return 560 - flatHit * 2 - flat.length * 0.1;
+  return subsequenceScore(flat, q);
+}
+
+/** 按查询过滤 + 排序图标名（空查询 = 全部，让用户直接浏览） */
+function filterIconNames(names, query, limit) {
+  const list = Array.isArray(names) ? names : [];
+  const q = asString(query).trim();
+  if (!q) return list.slice(0, limit > 0 ? limit : list.length);
+  const aliasHits = Object.create(null);
+  Object.keys(ICON_ALIASES).forEach(function (word) {
+    if (word.indexOf(q) >= 0) {
+      ICON_ALIASES[word].forEach(function (icon, idx) {
+        aliasHits[icon] = Math.max(aliasHits[icon] || 0, 900 - idx * 10 - word.length);
+      });
+    }
+  });
+  const scored = [];
+  list.forEach(function (name) {
+    const s = Math.max(iconMatchScore(name, q), aliasHits[name] || 0);
+    if (s > 0) scored.push({ name: name, score: s });
+  });
+  scored.sort(function (a, b) {
+    return b.score - a.score || (a.name < b.name ? -1 : 1);
+  });
+  return scored.map(function (s) {
+    return s.name;
+  }).slice(0, limit > 0 ? limit : scored.length);
+}
+
+/**
+ * 图标选择器（用户 2026-10-14 要求：模糊匹配 + 即时预览，不要非得拼对名字）。
+ * 默认就画出全部图标网格 → 不用背名字；打字即时过滤；方向键 + 回车选择。
+ */
+class QuickPanelIconPickerModal extends Modal {
+  constructor(app, opts) {
+    super(app);
+    this.opts = opts || {};
+    this.all = Array.isArray(this.opts.names) ? this.opts.names : [];
+    this.current = asString(this.opts.current);
+    this.preview = this.current;
+    this.query = '';
+    this.matches = [];
+    this.highlight = 0;
+    this.inputEl = null;
+    this.listEl = null;
+    this.previewEl = null;
+  }
+
+  onOpen() {
+    this.modalEl.addClass('quick-panel');
+    this.modalEl.addClass('qp-icon-picker');
+    if (this.titleEl && this.titleEl.parentElement) this.titleEl.parentElement.hide();
+    else if (this.titleEl && this.titleEl.hide) this.titleEl.hide();
+
+    this.contentEl.createDiv({ cls: 'qp-confirm-title', text: '换图标' });
+
+    // 顶部：即时预览 + 搜索框
+    const top = this.contentEl.createDiv({ cls: 'qp-icon-pick-top' });
+    this.previewEl = top.createDiv({ cls: 'qp-icon qp-icon-pick-preview' });
+    const box = top.createDiv({ cls: 'qp-icon-pick-input' });
+    this.inputEl = box.createEl('input', {
+      cls: 'qp-search-input',
+      attr: { type: 'text', placeholder: '打字筛选：中文也行（设置 / 搜索 / 文件夹）' },
+    });
+    this.inputEl.value = this.query;
+    this.inputEl.addEventListener('input', () => {
+      this.query = this.inputEl.value;
+      this.renderList();
+    });
+    this.inputEl.addEventListener('keydown', (evt) => {
+      if (evt.key === 'ArrowDown' || evt.key === 'ArrowRight') {
+        this.move(1);
+        evt.preventDefault();
+      } else if (evt.key === 'ArrowUp' || evt.key === 'ArrowLeft') {
+        this.move(-1);
+        evt.preventDefault();
+      } else if (evt.key === 'Enter') {
+        const name = this.matches[this.highlight];
+        if (name) this.choose(name);
+        evt.preventDefault();
+      }
+    });
+
+    this.listEl = this.contentEl.createDiv({ cls: 'qp-icon-pick-grid' });
+
+    const foot = this.contentEl.createDiv({ cls: 'qp-confirm-actions' });
+    const defBtn = foot.createEl('button', { cls: 'qp-btn is-ghost', attr: { type: 'button' } });
+    defBtn.setText('用默认图标');
+    defBtn.addEventListener('click', () => {
+      this.close();
+      if (typeof this.opts.onChoose === 'function') this.opts.onChoose('');
+    });
+
+    const win = (this.modalEl.ownerDocument && this.modalEl.ownerDocument.defaultView) || window;
+    win.setTimeout(() => {
+      if (this.inputEl && this.inputEl.focus) this.inputEl.focus();
+    }, 0);
+    this.renderList();
+  }
+
+  onClose() {
+    this.contentEl.empty();
+  }
+
+  paintPreview() {
+    if (!this.previewEl) return;
+    this.previewEl.empty();
+    this.previewEl.removeAttribute && this.previewEl.removeAttribute('title');
+    const name = this.preview || DEFAULT_ICON;
+    try {
+      setIcon(this.previewEl, name);
+    } catch (e) {
+      /* 名字不合法 */
+    }
+    const drawn = this.previewEl.querySelector ? this.previewEl.querySelector('svg') : null;
+    const label = this.preview ? this.preview : '默认图标';
+    if (this.previewEl.setAttribute) this.previewEl.setAttribute('title', drawn ? label : label + '（本机没有这个图标）');
+  }
+
+  renderList() {
+    this.matches = filterIconNames(this.all, this.query, this.query ? 240 : 600);
+    if (this.highlight >= this.matches.length) this.highlight = 0;
+    this.listEl.empty();
+    if (!this.matches.length) {
+      this.listEl.createDiv({ cls: 'qp-empty', text: '没有匹配的图标，换个词试试' });
+    }
+    const self = this;
+    this.matches.forEach(function (name, idx) {
+      const cell = self.listEl.createDiv({ cls: 'qp-icon-pick-cell' });
+      const icon = cell.createDiv({ cls: 'qp-icon' });
+      try {
+        setIcon(icon, name);
+      } catch (e) {
+        /* 名字不合法就留空 */
+      }
+      if (!(icon.querySelector && icon.querySelector('svg'))) cell.addClass('is-no-icon');
+      cell.createSpan({ cls: 'qp-icon-pick-name', text: name });
+      if (idx === self.highlight) cell.addClass('is-active');
+      cell.addEventListener('mouseenter', () => {
+        self.highlight = idx;
+        self.paintActive();
+      });
+      cell.addEventListener('click', () => self.choose(name));
+    });
+    this.paintActive();
+    this.paintPreview();
+  }
+
+  paintActive() {
+    if (!this.listEl) return;
+    const cells = this.listEl.children || [];
+    for (let i = 0; i < cells.length; i += 1) {
+      if (cells[i] && cells[i].toggleClass) cells[i].toggleClass('is-active', i === this.highlight);
+    }
+    const active = this.matches[this.highlight];
+    this.preview = active || this.current;
+    this.paintPreview();
+  }
+
+  move(step) {
+    if (!this.matches.length) return;
+    let next = this.highlight + step;
+    if (next < 0) next = this.matches.length - 1;
+    if (next > this.matches.length - 1) next = 0;
+    this.highlight = next;
+    this.paintActive();
+  }
+
+  choose(name) {
+    this.close();
+    if (typeof this.opts.onChoose === 'function') this.opts.onChoose(asString(name));
   }
 }
 
@@ -2635,6 +2961,10 @@ module.exports.stripLucidePrefix = stripLucidePrefix;
 module.exports.buildPickerItems = buildPickerItems;
 module.exports.filterPickerItems = filterPickerItems;
 module.exports.modalIconCandidates = modalIconCandidates;
+module.exports.iconMatchScore = iconMatchScore;
+module.exports.filterIconNames = filterIconNames;
+module.exports.ICON_ALIASES = ICON_ALIASES;
+module.exports.QuickPanelIconPickerModal = QuickPanelIconPickerModal;
 module.exports.QuickPanelPickerModal = QuickPanelPickerModal;
 module.exports.IconSuggestModal = IconSuggestModal;
 module.exports.QuickPanelSettingsModal = QuickPanelSettingsModal;

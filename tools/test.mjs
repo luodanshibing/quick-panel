@@ -1399,8 +1399,9 @@ try {
     ok(/setTitle\('设置'\)/.test(SOURCE) && /openSettings\(\)/.test(SOURCE), '面板「⋯」菜单里有「设置」入口');
     ok(!/silentClose\(\);\s*\n\s*this\.host\.openSettings\(\)/.test(SOURCE), '打开设置前不再先关面板（会被弹窗栈一起收掉，就是"点了没反应"）');
     ok(!/setPlaceholder\(/.test(stripComments(SOURCE)), '不再调用 SuggestModal 上不存在的 setPlaceholder（"换图标"点了没反应的原因）');
-    ok(/preview: true/.test(SOURCE), '换图标弹窗开了实时预览');
-    ok(/addInput\(\{ value: current, placeholder: '图标名 \/ emoji \/ 图片路径'/.test(SOURCE), '换图标改成输入框弹窗（与"改名"同一路径）');
+    ok(/class QuickPanelIconPickerModal extends Modal/.test(SOURCE), '换图标改成图标选择器（网格 + 即时预览）');
+    ok(/filterIconNames\(this\.all/.test(SOURCE), '选择器接的是模糊过滤（不是精确拼写）');
+    ok(!/addInput\(\{ value: current, placeholder: '图标名/.test(SOURCE), '不再要求用户手打完整图标名');
 
     // 设置面板能渲染、点开关能写配置
     const writes = [];
@@ -1648,6 +1649,29 @@ async function testMoveRefreshesInPlace() {
   const delTarget = modal.items[0].item;
   modal.host.removeItem(delTarget);
   eq(modal.items.length, 2, '删除后面板上的格子数当场减少（不需要关掉重开）');
+}
+
+/* 10.5b 图标模糊匹配（用户 2026-10-14：不要非得拼写正确） */
+{
+  const icons = ['settings', 'settings-2', 'search', 'search-alert', 'folder', 'folder-open', 'file-text', 'star', 'trash-2', 'refresh-cw', 'map-pin', 'message-square-text'];
+  const has = (list, n) => list.indexOf(n) >= 0;
+  ok(has(QP.filterIconNames(icons, 'sett'), 'settings'), '前缀命中：sett → settings');
+  eq(QP.filterIconNames(icons, 'sett')[0], 'settings', '前缀命中排最前');
+  ok(has(QP.filterIconNames(icons, 'stg'), 'settings'), '跳字命中：stg → settings（乱序跳字也能找到）');
+  ok(has(QP.filterIconNames(icons, 'ft'), 'file-text'), '跳字命中：ft → file-text（跨过连字符）');
+  eq(QP.filterIconNames(icons, 'tf').indexOf('file-text'), -1, '顺序不对就不命中（tf ≠ file-text，避免乱匹配）');
+  ok(QP.filterIconNames(icons, '').length === icons.length, '空查询 = 全部（让人先浏览，不用背名字）');
+  eq(QP.filterIconNames(icons, 'zzz').length, 0, '彻底不匹配 → 空');
+  eq(QP.iconMatchScore('settings', ''), 1, '空查询给基础分（不参与排序）');
+  ok(QP.iconMatchScore('settings', 'sett') > QP.iconMatchScore('settings-2', 'sett'), '更短的完整前缀排更前');
+  ok(QP.iconMatchScore('xsettings', 'sett') > 0 && QP.iconMatchScore('xsettings', 'sett') < QP.iconMatchScore('settings', 'sett'), '中间命中分数低于前缀命中');
+
+  // 中文别名（用户不知道图标英文名时的兜底）
+  ok(has(QP.filterIconNames(icons, '设置'), 'settings'), '中文别名：设置 → settings');
+  ok(has(QP.filterIconNames(icons, '搜索'), 'search'), '中文别名：搜索 → search');
+  ok(has(QP.filterIconNames(icons, '文件夹'), 'folder'), '中文别名：文件夹 → folder');
+  ok(has(QP.filterIconNames(icons, '标签'), 'tag') || QP.filterIconNames(icons, '标签').length >= 0, '中文别名命中不到时也不报错');
+  ok(Object.keys(QP.ICON_ALIASES).length > 40, '中文别名表覆盖常用语义（实际 ' + Object.keys(QP.ICON_ALIASES).length + ' 个词）');
 }
 
 /* 10.5 图标候选清洗 */

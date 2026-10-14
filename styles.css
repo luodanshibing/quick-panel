@@ -417,6 +417,94 @@
   margin-top: 12px;
 }
 
+/* ---------- 图标选择器（模糊匹配 + 即时预览） ---------- */
+
+.qp-icon-picker .modal {
+  width: min(620px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+}
+
+.qp-icon-pick-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+/* 预览：当前高亮/输入的图标放大显示 */
+.qp-icon-pick-preview {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  color: var(--text-normal);
+}
+
+.qp-icon-pick-preview svg {
+  width: 22px;
+  height: 22px;
+}
+
+.qp-icon-pick-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.qp-icon-pick-input .qp-search-input {
+  width: 100%;
+}
+
+.qp-icon-pick-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(74px, 1fr));
+  gap: 4px;
+  max-height: min(58vh, 460px);
+  overflow: auto;
+  padding: 2px;
+}
+
+.qp-icon-pick-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 6px 2px 4px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.qp-icon-pick-cell:hover {
+  background: var(--background-modifier-hover);
+}
+
+.qp-icon-pick-cell.is-active {
+  background: var(--background-modifier-hover);
+  border-color: var(--interactive-accent);
+}
+
+/* 名字在本机不存在：标出来，别让用户白选 */
+.qp-icon-pick-cell.is-no-icon {
+  opacity: 0.45;
+}
+
+.qp-icon-pick-name {
+  font-size: 10px;
+  line-height: 1.2;
+  color: var(--text-faint);
+  text-align: center;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qp-icon-pick-cell.is-active .qp-icon-pick-name {
+  color: var(--text-normal);
+}
+
 /* ---------- 添加格子选择器（命令 / 笔记 / 文件夹） ---------- */
 
 .qp-picker .modal {
