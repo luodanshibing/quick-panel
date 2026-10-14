@@ -2308,12 +2308,7 @@ class QuickPanelPlugin extends Plugin {
       name: '打开配置文件',
       callback: () => this.openConfigFile(),
     });
-    // 故障排查用：打开面板后跑这条，把真实几何写进库根 .quick-panel-diag.txt（可随时删）
-    this.addCommand({
-      id: 'diagnose',
-      name: '导出面板诊断',
-      callback: () => this.dumpPanelDiagnostics(),
-    });
+
 
     if (this.configNotice) new Notice(this.configNotice, 8000);
   }
@@ -2563,116 +2558,6 @@ class QuickPanelPlugin extends Plugin {
     }
     this.logExecution(label);
     return true;
-  }
-
-  /**
-   * 诊断：把「面板到底被渲染成什么样」写进库根 .quick-panel-diag.txt。
-   * 用它替代"让用户截图/复制控制台"—— agent 直接读文件就能定性。
-   */
-  async dumpPanelDiagnostics() {
-    const box = (el) => {
-      if (!el) return '缺失';
-      const r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
-      if (!r) return '无 rect';
-      return (
-        'x=' + Math.round(r.left) + ' y=' + Math.round(r.top) +
-        ' w=' + Math.round(r.width) + ' h=' + Math.round(r.height)
-      );
-    };
-    const styleOf = (el, props) => {
-      if (!el) return '缺失';
-      const cs = this.getWindow().getComputedStyle(el);
-      return props.map((p) => p + '=' + cs.getPropertyValue(p)).join(' ');
-    };
-    const lines = [];
-    lines.push('quick-panel 诊断 · ' + new Date().toISOString() + '（本文件可随时删除）');
-    const diagWin = this.modal ? this.modal.getWindow() : window;
-    lines.push('viewport ' + diagWin.innerWidth + 'x' + diagWin.innerHeight + ' dpr=' + diagWin.devicePixelRatio);
-    lines.push('布局：窗口居中（不跟随鼠标）');
-    const modal = this.modal;
-    if (!modal) {
-      const el = document.querySelector('.modal-container.quick-panel');
-      lines.push('当前没有活动面板实例；dom 里' + (el ? '有' : '没有') + ' .modal-container.quick-panel');
-      if (el) {
-        lines.push('  container ' + box(el) + ' | ' + styleOf(el, ['position', 'width', 'height', 'display', 'transform']));
-        const card = el.querySelector('.modal');
-        lines.push('  card ' + box(card) + ' | ' + styleOf(card, ['position', 'width', 'max-width', 'padding']));
-      }
-      new Notice('没有活动的面板实例；已导出 DOM 现状到库根 .quick-panel-diag.txt');
-    } else {
-      const container = modal.containerEl || (modal.modalEl && modal.modalEl.closest ? modal.modalEl.closest('.modal-container') : null);
-      const card = modal.modalEl;
-      lines.push('配置：' + this.configPath + '（来自磁盘=' + this.loadedFromDisk + '） corrupt=' + !!modal.config.corrupt);
-      lines.push('解析到的命令条目数=' + (this.registry ? this.registry.all.length : '未解析') +
-        '；面板条目=' + modal.items.length + '；可见=' + modal.visible.length + '；缺失=' + modal.missing.length);
-      lines.push('columns=' + modal.columns + ' rows=' + JSON.stringify(modal.rows) + ' query=' + JSON.stringify(modal.query));
-      lines.push('container ' + box(container) + ' | ' + styleOf(container, ['position', 'width', 'height', 'display', 'transform', 'opacity']));
-      lines.push('  container id/class: ' + (container ? container.id + ' / ' + container.className : ''));
-      lines.push('card ' + box(card) + ' | ' + styleOf(card, ['position', 'left', 'top', 'width', 'max-width', 'padding', 'min-height']));
-      lines.push('  modalEl 内联 left=' + (card ? card.style.left : '') + ' top=' + (card ? card.style.top : '') +
-        ' --qp-width=' + (card && card.style.getPropertyValue ? card.style.getPropertyValue('--qp-width') : ''));
-      const bg = container && container.querySelector ? container.querySelector('.modal-bg') : null;
-      lines.push('bg ' + box(bg) + ' | ' + styleOf(bg, ['position', 'width', 'height', 'background-color', 'opacity']));
-      const content = modal.contentEl;
-      lines.push('content ' + box(content) + ' | ' + styleOf(content, ['display', 'max-height', 'overflow']));
-      const grid = modal.gridEl;
-      lines.push('grid ' + box(grid) + ' | ' + styleOf(grid, ['display', 'grid-template-columns', 'gap', 'width']));
-      const cells = content && content.querySelectorAll ? content.querySelectorAll('.qp-cell') : [];
-      lines.push('cells=' + cells.length + '；首格 ' + (cells[0] ? box(cells[0]) + ' | ' + styleOf(cells[0], ['display', 'width', 'height', 'background-color', 'opacity']) : '（无）'));
-      if (cells[0] && cells[0].querySelector) {
-        const lbl = cells[0].querySelector('.qp-cell-label');
-        lines.push('  首格 label="' + (lbl ? lbl.textContent : '') + '" title="' + (cells[0].getAttribute('title') || '') + '"');
-      }
-      lines.push('最近用过=' + modal.recent.length + '；状态栏="' + (modal.statusEl ? modal.statusEl.textContent : '') + '"');
-      if (modal.searchEl) lines.push('搜索框 ' + box(modal.searchEl));
-      lines.push('最近 5 次执行：' + (this.execLog.slice(-5).map((e) => e.name).join(' / ') || '（无）'));
-      lines.push('--- 最近 14 条点击/执行（▸ = 点击到了面板，无 ▸ 说明点击根本没到面板）---');
-      const tail = this.execLog.slice(-14);
-      if (!tail.length) lines.push('（空：还没点过任何格子）');
-      tail.forEach((e) => lines.push('  ' + e.at + '  ' + e.name));
-      new Notice('已导出诊断到库根 .quick-panel-diag.txt（' + lines.length + ' 行）');
-    }
-    const text = lines.join('\n') + '\n';
-    // 三重落盘：adapter → vault.create/modify → 直接 fs 写库根绝对路径。
-    // （用户反馈"诊断命令也无效、不生成文件"：单靠 adapter 有时会静默失败）
-    const rel = '.quick-panel-diag.txt';
-    let written = '';
-    try {
-      await this.app.vault.adapter.write(rel, text);
-      written = 'vault.adapter';
-    } catch (e) {
-      written = '';
-    }
-    if (!written) {
-      try {
-        const existing = this.app.vault.getAbstractFileByPath(rel);
-        if (existing) await this.app.vault.modify(existing, text);
-        else await this.app.vault.create(rel, text);
-        written = 'vault.create/modify';
-      } catch (e) {
-        written = '';
-      }
-    }
-    if (!written) {
-      try {
-        const adapter = this.app.vault.adapter;
-        const base = typeof adapter.getBasePath === 'function' ? adapter.getBasePath() : adapter.basePath;
-        if (!base) throw new Error('拿不到库的绝对路径');
-        const fs = require('fs');
-        const path = require('path');
-        fs.writeFileSync(path.join(base, rel), text, 'utf8');
-        written = 'fs.writeFileSync';
-      } catch (e) {
-        written = '';
-      }
-    }
-    if (written) {
-      new Notice('已导出诊断：库根 ' + rel + '（' + lines.length + ' 行，写入方式 ' + written + '）', 8000);
-    } else {
-      // 三条路全失败：把内容塞进控制台并留下可见提示，不静默
-      console.log('==== quick-panel 诊断 ====\n' + text);
-      new Notice('诊断文件写不进去（已打印到控制台）。请按 Ctrl+Shift+I 打开控制台复制。', 12000);
-    }
   }
 
   /** 记一笔「最近用过」：只写配置文件，且失败也不打扰用户（不影响主流程） */

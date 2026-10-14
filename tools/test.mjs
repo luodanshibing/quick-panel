@@ -664,11 +664,11 @@ ok(!/\bdocument\.addEventListener\(/.test(code), '不绕过 registerDomEvent 直
 ok(!/window\.addEventListener\(/.test(code), '不直接挂 window 监听');
 ok(/gridColumns\(/.test(code), '列数由 gridColumns 纯函数决定，不写死在 CSS');
 ok(!/setInterval/.test(code), '全文件没有 setInterval（面板生命周期不依赖定时器）');
-ok((code.match(/\.write\(/g) || []).length === 3, '写盘只有三处（配置文件本身 + 旧名迁移 + 诊断文件），没有第四个写点');
-ok((code.match(/adapter\.write\(/g) || []).length === 3, '三处写盘都走 vault.adapter.write');
+ok((code.match(/\.write\(/g) || []).length === 2, '写盘只有两处（配置文件本身 + 旧名迁移），没有第三个写点');
+ok((code.match(/adapter\.write\(/g) || []).length === 2, '两处写盘都走 vault.adapter.write');
 ok(code.indexOf("adapter.write(this.configPath") >= 0, '写盘目标之一就是配置文件的固定路径 this.configPath');
 ok(code.indexOf("adapter.write(this.configPath, oldText)") >= 0, '旧名迁移只把旧文件内容原样写给新名（不加工内容）');
-ok(code.indexOf("'.quick-panel-diag.txt'") >= 0, '另一处写盘是显式命名的诊断文件（可用完即删）');
+ok(code.indexOf("'.quick-panel-diag.txt'") < 0, '诊断文件已随诊断命令一并移除');
 // 逐个检查 adapter.write 的**第一个实参**必须是白名单里的目标（只允许配置文件和诊断文件）
 const writeTargets = [];
 {
@@ -691,16 +691,16 @@ const writeTargets = [];
     writeTargets.push(args.split(',')[0].trim());
   }
 }
-ok(writeTargets.length === 3, '全文件 3 处 adapter.write（实际 ' + writeTargets.length + '）');
+ok(writeTargets.length === 2, '全文件 2 处 adapter.write（实际 ' + writeTargets.length + '）');
 const ALLOWED_TARGETS = ['this.configPath', 'rel', 'CONFIG_NAME_LEGACY'];
 ok(
   writeTargets.every((t) => ALLOWED_TARGETS.indexOf(t) >= 0),
-  '每处写盘的目标都在白名单内（this.configPath / rel / CONFIG_NAME_LEGACY）：' + JSON.stringify(writeTargets)
+  '每处写盘的目标都在白名单内（this.configPath / CONFIG_NAME_LEGACY）：' + JSON.stringify(writeTargets)
 );
 ok(!/\.obsidian/.test(code), '源码里不出现 .obsidian（不碰插件配置目录）');
 ok(!/vault\.delete|vault\.trash|vault\.rename/.test(code), '不删除/改名库内文件');
-ok(/vault\.create\(rel, text\)/.test(code) || /vault\.create\(/.test(code), '库内新建只允许诊断文件这一处（vault.create 的第一参数是固定常量 rel）');
-ok(/const rel = '\.quick-panel-diag\.txt'/.test(code), 'vault.create 的目标是固定的诊断文件名常量');
+ok(!/vault\.create\(/.test(code), '面板不在库内新建任何文件（全文件没有 vault.create 调用）');
+ok(code.indexOf('quick-panel-diag') < 0, '诊断文件名常量已彻底移除');
 ok(/class QuickPanelModal extends Modal/.test(code) && /this\.cellNodes = \[\]/.test(code), 'onClose 里释放网格节点引用');
 
 /* 视图类不许覆盖 Obsidian 的保留方法名（simple-memos 的教训） */
