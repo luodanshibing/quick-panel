@@ -93,7 +93,7 @@ Deployment and commit are gated on that exit code: non-zero means do not ship.
 
 ## Troubleshooting
 
-Run **Quick Panel: 导出面板诊断（排查显示问题用）** from the command palette (after opening the panel once). It writes `.quick-panel-diag.txt` to the vault root with the real numbers: viewport size, the modal container / card / `.modal-bg` / grid / first cell rectangles, the computed `display` / `width` / `transform` of each, how many items were resolved, and the last five commands you ran. Delete the file afterwards — it is created only when you run that command.
+Run **Quick Panel: 导出面板诊断** from the command palette (after opening the panel once). It writes `.quick-panel-diag.txt` to the vault root with the real numbers: viewport size, the modal container / card / `.modal-bg` / grid / first cell rectangles, the computed `display` / `width` / `transform` of each, how many items were resolved, and the last five commands you ran. Delete the file afterwards — it is created only when you run that command.
 
 | Symptom | Likely cause |
 |---|---|
