@@ -832,7 +832,7 @@ class QuickPanelModal extends Modal {
     const actions = header.createDiv({ cls: 'qp-actions' });
     const addBtn = actions.createEl('button', { cls: 'qp-icon-btn', attr: { type: 'button' } });
     setIcon(addBtn, 'plus');
-    addBtn.setAttribute('aria-label', '添加格子（命令 / 笔记 / 文件夹）');
+    addBtn.setAttribute('aria-label', '添加格子');
     addBtn.addEventListener('click', () => this.host.openPicker(this));
     const menuBtn = actions.createEl('button', { cls: 'qp-icon-btn', attr: { type: 'button' } });
     setIcon(menuBtn, 'more-horizontal');
@@ -844,7 +844,7 @@ class QuickPanelModal extends Modal {
     const wrap = this.contentEl.createDiv({ cls: 'qp-search' });
     const input = wrap.createEl('input', {
       cls: 'qp-search-input',
-      attr: { type: 'text', placeholder: '过滤（可选，面板里直接打字也一样）' },
+      attr: { type: 'text', placeholder: '过滤' },
     });
     this.searchEl = input;
     input.addEventListener('input', () => {
@@ -916,7 +916,7 @@ class QuickPanelModal extends Modal {
 
     if (this.statusEl) {
       const parts = [];
-      if (this.config.corrupt) parts.push('配置文件读坏了，本次用临时空面板启动（原文件未改动）');
+      if (this.config.corrupt) parts.push('配置文件读坏了，本次用空面板启动');
       if (this.config.errors && this.config.errors.length) parts.push(this.config.errors.length + ' 条配置格式不对，已忽略');
       if (this.missing.length) parts.push(this.missing.length + ' 项命令/文件已找不到');
       this.statusEl.setText(parts.join(' · '));
@@ -951,7 +951,7 @@ class QuickPanelModal extends Modal {
       btn.addClass('is-missing');
       btn.setAttribute('aria-disabled', 'true');
       const why = entry.missing === 'command'
-        ? '（按了没关系：会问你要不要重新绑定）'
+        ? '会问你要不要重新绑定'
         : '（库内已找不到这个路径）';
       btn.setAttribute('title', name + ' ' + why);
     }
@@ -1263,7 +1263,7 @@ class QuickPanelModal extends Modal {
     const path = normalizeVaultPath(asString(item.path).trim());
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!file) {
-      new Notice('找不到这个文件：' + path + '（它可能被改名或删除，面板里这条已标灰）');
+      new Notice('找不到这个文件：' + path + '它可能已被改名或删除');
       return undefined;
     }
     this.silentClose();
@@ -1310,8 +1310,7 @@ class QuickPanelModal extends Modal {
     const index = typeof itemIndex === 'number' ? itemIndex : this.indexOfItem(entry.item);
     const item = entry.item;
     const menu = new Menu();
-    menu.addItem((i) => i.setTitle('这一格：' + this.displayName(item)).setIcon('info').setDisabled(true));
-    menu.addSeparator();
+    // 原来第一项是禁用的「这一格：<名字>」标题行 —— 用户 2026-10-14 裁定删除（纯冗余，菜单本身就是这一格）
     menu.addItem((i) =>
       i
         .setTitle('改名…')
@@ -1355,7 +1354,7 @@ class QuickPanelModal extends Modal {
           new ConfirmLikeModal(
             this.app,
             '删除这一格？',
-            [{ label: this.displayName(item) + '（只从面板移除，不动任何文件）' }],
+            [{ label: this.displayName(item) + '只从面板移除，不动任何文件' }],
             [
               {
                 label: '删除',
@@ -1373,7 +1372,7 @@ class QuickPanelModal extends Modal {
       menu.addSeparator();
       menu.addItem((i) =>
         i
-          .setTitle('重新绑定到同名命令')
+          .setTitle('重新绑定命令')
           .setIcon('link')
           .onClick(() => {
             const snapshot = cleanLabel(item.nameSnapshot) || cleanLabel(item.label) || asString(item.id);
@@ -1409,7 +1408,7 @@ class QuickPanelModal extends Modal {
         },
       },
     ]);
-    modal.addInput({ value: current, placeholder: '显示名（留空则用命令/文件名）' });
+    modal.addInput({ value: current, placeholder: '显示名' });
     modal.open();
   }
 
@@ -1429,7 +1428,7 @@ class QuickPanelModal extends Modal {
       this.app,
       '换图标',
       [
-        { label: '填 Lucide 图标名（如 settings、folder-open）、emoji（如 🚩）或库内图片路径（如 logo.png）', muted: true },
+        { label: '图标名、emoji 或库内图片路径', muted: true },
         { label: '常用：' + quick.join('、'), muted: true },
       ],
       [
@@ -1438,7 +1437,7 @@ class QuickPanelModal extends Modal {
           onClick: function () {
             const value = modal.getInputValue();
             self.host.updateItem(item, { icon: value });
-            new Notice(cleanLabel(value) ? '已改图标：' + value : '已清空图标（回退默认图标）');
+            new Notice(cleanLabel(value) ? '已改图标：' + value : '已清空图标，将用默认图标');
             self.host.reopen();
           },
         },
@@ -1446,7 +1445,7 @@ class QuickPanelModal extends Modal {
           label: '用默认图标',
           onClick: function () {
             self.host.updateItem(item, { icon: '' });
-            new Notice('已清空图标（回退默认图标）');
+            new Notice('已清空图标，将用默认图标');
             self.host.reopen();
           },
         },
@@ -1467,7 +1466,7 @@ class QuickPanelModal extends Modal {
     );
     menu.addSeparator();
     menu.addItem((i) => i.setTitle('打开配置文件').setIcon('file-text').onClick(() => this.host.openConfigFile()));
-    menu.addItem((i) => i.setTitle('在文件浏览器中定位配置文件').setIcon('folder').onClick(() => this.host.revealConfigFile()));
+    menu.addItem((i) => i.setTitle('定位配置文件').setIcon('folder').onClick(() => this.host.revealConfigFile()));
     menu.showAtMouseEvent(evt);
   }
 
@@ -1681,7 +1680,7 @@ function renderPanelSettingsRows(container, plugin, onAfterChange) {
   const rows = [
     ['显示「最近用过」', '面板底部一行，显示最近执行过的命令', (s) => s.addToggle((t) => t.setValue(!!panel().showRecent).onChange((v) => write({ showRecent: !!v })))],
     ['显示过滤框', '面板里本来就可以直接打字过滤，默认关掉更清爽', (s) => s.addToggle((t) => t.setValue(!!panel().showSearch).onChange((v) => write({ showSearch: !!v })))],
-    ['格子大小', '图标格子的边长（像素）', (s) => s.addSlider((sl) => sl.setLimits(24, 72, 4).setValue(panel().iconSize).setDynamicTooltip().onChange((v) => write({ iconSize: v })))],
+    ['格子大小', '图标格子的边长', (s) => s.addSlider((sl) => sl.setLimits(24, 72, 4).setValue(panel().iconSize).setDynamicTooltip().onChange((v) => write({ iconSize: v })))],
     ['每行列数', '自动 = 按窗口宽度自适应', (s) =>
       s.addDropdown((d) =>
         d
@@ -1744,7 +1743,7 @@ class QuickPanelSettingTab extends PluginSettingTab {
       .addButton((b) =>
         b.setButtonText('恢复').onClick(() => {
           resetPanelDisplaySettings(this.plugin);
-          new Notice('显示设置已恢复默认（格子内容不动）');
+          new Notice('显示设置已恢复默认，格子内容不动');
           this.display();
         })
       );
@@ -1802,7 +1801,7 @@ class QuickPanelSettingsModal extends Modal {
     resetBtn.setText('恢复默认显示设置');
     resetBtn.addEventListener('click', () => {
       resetPanelDisplaySettings(this.plugin);
-      new Notice('显示设置已恢复默认（格子内容不动）');
+      new Notice('显示设置已恢复默认，格子内容不动');
       this.render();
     });
   }
@@ -1980,13 +1979,13 @@ class QuickPanelPlugin extends Plugin {
     });
     this.addCommand({
       id: 'open-config',
-      name: '打开配置文件（快捷面板.json）',
+      name: '打开配置文件',
       callback: () => this.openConfigFile(),
     });
     // 故障排查用：打开面板后跑这条，把真实几何写进库根 .quick-panel-diag.txt（可随时删）
     this.addCommand({
       id: 'diagnose',
-      name: '导出面板诊断（排查显示问题用）',
+      name: '导出面板诊断',
       callback: () => this.dumpPanelDiagnostics(),
     });
 
@@ -2206,7 +2205,7 @@ class QuickPanelPlugin extends Plugin {
     const target = cmd || registry.find(id);
     const label = target && cleanLabel(target.name) ? cleanLabel(target.name) : id;
     if (!target) {
-      new Notice('这条命令已经不在注册表里了：' + id + '（右键这个格子可以重新绑定）', 8000);
+      new Notice('这条命令已经不在注册表里了：' + id + '可右键此格重新绑定', 8000);
       return false;
     }
     const needsEditor = typeof target.editorCallback === 'function' || typeof target.editorCheckCallback === 'function';
